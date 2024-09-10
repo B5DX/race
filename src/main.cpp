@@ -6,8 +6,8 @@
 // #include "llvm/Support/Path.h"
 // #include "llvm/Support/TargetSelect.h"
 
-#include "Frontend/FAction.h"
 #include "Frontend/PragmaHandler.h"
+#include "Frontend/Scanner.h"
 
 #include "IR/IR.h"
 
@@ -55,5 +55,5 @@ int main(int argc, const char **argv) {
     }
 
     llvm::outs() << "Running tool.\n";
-    return Tool.run(newFrontendActionFactory<FAction>().get());
+    return Tool.run(newFrontendActionFactory<Scanner>().get());
 }

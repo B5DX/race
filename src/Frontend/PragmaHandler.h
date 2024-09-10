@@ -1,3 +1,5 @@
+#ifndef PRAGMAHANDLER_H
+#define PRAGMAHANDLER_H
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/TokenKinds.h"
 #include "clang/Lex/Pragma.h"
@@ -16,4 +18,16 @@ class MyPragmaHandler : public clang::PragmaHandler {
 
     void HandlePragma(clang::Preprocessor &PP, clang::PragmaIntroducer Introducer,
                       clang::Token &PragmaTok) override;
+
+    bool ifBelongsToPragma(clang::SourceLocation Loc) {
+        assert(srcLocBegin.size() == srcLocEnd.size());
+        for (size_t idx = 0; idx < srcLocBegin.size(); idx++) {
+            if (Loc >= srcLocBegin[idx] && Loc <= srcLocEnd[idx]) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
+
+#endif

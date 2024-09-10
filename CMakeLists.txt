@@ -23,9 +23,13 @@ include_directories(${CLANG_INCLUDE_DIRS})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 add_definitions(${LLVM_DEFINITIONS})
 if(NOT ${LLVM_ENABLE_RTTI})
+  message(STATUS "Disabling RTTI")
   # For non-MSVC compilers
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 endif()
+
+# add -g to enable debug
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
 include_directories(${PROJECT_SOURCE_DIR}/src
                     ${PROJECT_SOURCE_DIR}/src/**)
