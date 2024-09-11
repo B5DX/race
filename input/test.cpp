@@ -1,16 +1,16 @@
 #include <stdio.h>
 #include "tmp.h"
 
-#pragma past begin
-#pragma past end
+#pragma avn begin
+#pragma avn end
 int foo(int c) {
-    #pragma past begin
+    #pragma avn begin
     if (c > 10) {
         return c + 100;
     } else {
         return 94;
     }
-    #pragma past end
+    #pragma avn end
 }
 void bar(int x) {
     int a;
@@ -23,12 +23,20 @@ void bar(int x) {
 
 
 void test(int x, int y) {
-    #pragma past begin
-    for (int i = 0; i < 10; i++) {
-        ;
-        // printf("%d %d\n", x, y);
+    #pragma avn begin
+    int i = 0;
+    int ims = 0, jms = 1;
+    int a, b, c;
+    int **C;
+    for (int j = jms; j <= 20; j++) {
+        for (i = -ims+1; i < 10; i++) {
+            // Y[i] = Z[i] * W[i];
+            X[i][j] = C[j][i+1] + Y[i];
+            a = b * c + a * b;
+        }
     }
-    #pragma past end
+    
+    #pragma avn end
     #pragma omp parallel for
     for (int i = 0; i < 10; i++) {
         ;
@@ -37,9 +45,9 @@ void test(int x, int y) {
 }
 
 int main() {
-    #pragma past begin
+    #pragma avn begin
     // test(1, 2);
     func();
-    #pragma past end
+    #pragma avn end
     return 0;
 }

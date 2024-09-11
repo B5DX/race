@@ -13,7 +13,7 @@ class MyPragmaHandler : public clang::PragmaHandler {
     llvm::SmallVector<clang::SourceLocation> srcLocEnd;
 
   public:
-    MyPragmaHandler() : PragmaHandler("past"),
+    MyPragmaHandler() : PragmaHandler("avn"),
                         IsValidatorRegistered(false) {}
 
     void HandlePragma(clang::Preprocessor &PP, clang::PragmaIntroducer Introducer,

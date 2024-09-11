@@ -1,5 +1,6 @@
 #ifndef IR_H
 #define IR_H
+#include "clang/ASTMatchers/ASTMatchers.h"
 #include <common.h>
 
 // Restrain the scope of the using directive to the current file.
@@ -53,6 +54,7 @@ class Expression {
         EXPR_ASSIGN,
         EXPR_BINARY_LAST,
         EXPR_OPERATOR_LAST,
+        EXPR_NUMBER,
         EXPR_DECL_REF,
         EXPR_ARRAY_REF
     };
@@ -213,39 +215,112 @@ class DeclRef : public Expression {
     }
 };
 
-class ForStmt : public Statement {
+class Number : public Expression {
+  using LL = long long;
   protected:
-    shared_ptr<DeclRef> loop_var;
-    shared_ptr<Expression> begin, end;
-    vector<shared_ptr<Statement>> body;
-    vector<shared_ptr<DeclRef>> index_vars;
+    std::variant<LL, double> value;
 
   public:
-    ForStmt(shared_ptr<DeclRef> loop_var, shared_ptr<Expression> begin, shared_ptr<Expression> end,
-            shared_ptr<ForStmt> parent_for) : Statement(STMT_FOR), loop_var(loop_var), begin(begin), end(end) {
-        if (parent_for)
-            index_vars = parent_for->index_vars;
-        index_vars.push_back(loop_var);
+    Number(LL value) : Expression(EXPR_NUMBER), value(value) {}
+    Number(double value) : Expression(EXPR_NUMBER), value(value) {}
+
+    Number(int value) : Expression(EXPR_NUMBER), value(static_cast<LL>(value)) {}
+    Number(long value) : Expression(EXPR_NUMBER), value(static_cast<LL>(value)) {}
+    Number(unsigned value) : Expression(EXPR_NUMBER), value(static_cast<LL>(value)) {}
+    Number(float value) : Expression(EXPR_NUMBER), value(static_cast<double>(value)) {}
+
+    virtual string to_string() const override {
+        if (std::holds_alternative<LL>(value))
+            return std::to_string(std::get<LL>(value));
+        else
+            return std::to_string(std::get<double>(value));
+    }
+
+    static bool classof(const Expression *expr) {
+        return expr->get_kind() == EXPR_NUMBER;
     }
 };
 
-class ArrayIndex {
+class Assignment : public Statement {
   protected:
-    vector<int> index_coefficient;
-    int constant;
-    shared_ptr<ForStmt> parent_loop;
+    shared_ptr<DeclRef> lhs;
+    shared_ptr<Expression> rhs;
 
   public:
+    Assignment(shared_ptr<DeclRef> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN), lhs(lhs), rhs(rhs) {}
+
+    virtual string to_string() const override { return lhs->to_string() + " = " + rhs->to_string(); }
+
+    static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_ASSIGN; }
 };
+
+class ForStmt : public Statement {
+    // Parse and set the loop variable, begin, and end from the for statement.
+    void buildBounds(const clang::ForStmt *for_stmt);
+    void processInnerStmt(const clang::Stmt *stmt);
+
+  protected:
+    shared_ptr<DeclRef> loop_var;
+    shared_ptr<Expression> begin, end; // begin <= loop_var <= end
+    vector<shared_ptr<Statement>> body;
+    vector<shared_ptr<DeclRef>> index_vars;
+    unsigned depth;
+
+  public:
+    /**
+     * @brief Construct a ForStmt object from a clang::ForStmt object.
+     * @warning Parent_for cannot be shared_ptr<ForStmt> because of the constructor uses this. 
+     * And shared_from_this() can only be called after the object is constructed.
+     */
+    ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for = nullptr);
+    static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_FOR; }
+    virtual string to_string() const override;
+};
+
+// class ArrayIndex {
+//   protected:
+//     vector<int> index_coefficient;
+//     int constant;
+//     shared_ptr<ForStmt> parent_loop;
+
+//   public:
+//     ArrayIndex(const vector<int> &index_coefficient, int constant, shared_ptr<ForStmt> parent_loop)
+//         : index_coefficient(index_coefficient), constant(constant), parent_loop(parent_loop) {}
+// };
+
+// class ArrayRef : public Expression {
+//   protected:
+//     shared_ptr<DeclRef> array;
+//     vector<shared_ptr<ArrayIndex>> indices;
+
+//   public:
+//     ArrayRef(shared_ptr<DeclRef> array, ) : Expression(EXPR_ARRAY_REF), array(array) {}
+// };
 
 class ArrayRef : public Expression {
   protected:
     shared_ptr<DeclRef> array;
-    vector<shared_ptr<ArrayIndex>> indices;
+    /**
+     * @brief The front element is the innermost index. e.g. X[j][i] -> indices = {i, j}.
+     */
+    vector<shared_ptr<Expression>> indices;
 
   public:
-    ArrayRef(shared_ptr<DeclRef> array) : Expression(EXPR_ARRAY_REF), array(array) {}
+    ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices);
+
+    const vector<shared_ptr<Expression>> &getIndices() const { return indices; }
+
+    shared_ptr<DeclRef> getArray() const { return array; }
+
+    static bool classof(const Expression *expr) {
+        return expr->get_kind() == EXPR_ARRAY_REF;
+    }
+    virtual string to_string() const override;
 };
+
+shared_ptr<Expression> parseExpression(const clang::Expr *expr);
+
+inline string generateParenthesesStr(const Expression *expr, const Operator *parent_op);
 
 } // namespace IR
 

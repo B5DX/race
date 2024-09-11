@@ -6,5 +6,6 @@
 #include <string>
 #include <memory>
 #include <algorithm>
+#include <variant>
 
 #endif

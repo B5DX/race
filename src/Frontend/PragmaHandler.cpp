@@ -20,10 +20,10 @@ void MyPragmaHandler::HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer
                 return;
             }
             // Check if the #pragma past end is in the same file as #pragma past begin
-            // if (PP.getSourceManager().getFileID(srcLocBeginEnd.back().first) != PP.getSourceManager().getFileID(srcLocBeginEnd.back().second)) {
-            //     llvm::errs() << "The #pragma past end is in a different file from #pragma past begin\n";
-            //     return;
-            // }
+            if (PP.getSourceManager().getFileID(srcLocBegin.back()) != PP.getSourceManager().getFileID(srcLocEnd.back())) {
+                llvm::errs() << "The #pragma past end is in a different file from #pragma past begin\n";
+                return;
+            }
             // TODO: DO SOMETHING
             // print the range of the #pragma past begin and #pragma past end
             // llvm::errs() << "The range of the #pragma past begin and #pragma past end is from "
