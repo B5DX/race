@@ -1,10 +1,11 @@
 #ifndef IR_H
 #define IR_H
 #include "clang/ASTMatchers/ASTMatchers.h"
-#include <common.h>
+#include "common.h"
+#include <variant>
 
-// Restrain the scope of the using directive to the current file.
-namespace {
+namespace IR {
+
 using std::shared_ptr;
 using std::string;
 using std::vector;
@@ -15,9 +16,6 @@ enum PRIORITIES {
     PRIORITY_MUL = 2,
     PRIORITY_UNARY = 3,
 };
-} // namespace
-
-namespace IR {
 
 class Statement {
   public:
@@ -70,6 +68,15 @@ class Expression {
     virtual string to_string() const = 0;
 };
 
+template <typename To, typename From>
+inline std::shared_ptr<To> llvm_pointer_cast(const std::shared_ptr<From> &e) {
+    if (llvm::isa<To>(e.get())) {
+        return std::static_pointer_cast<To>(e);
+    } else {
+        return nullptr;
+    }
+}
+
 class Operator : public Expression {
   public:
     Operator(ExprKind kind) : Expression(kind) {}
@@ -93,6 +100,8 @@ class UnaryOp : public Operator {
         : Operator(kind), op(op), expr(expr) {}
     virtual PRIORITIES get_priority() const override { return PRIORITY_UNARY; }
     virtual string to_string() const override;
+
+    virtual shared_ptr<Expression> getOperand() const { return expr; }
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() >= EXPR_UNARY && expr->get_kind() < EXPR_UNARY_LAST;
@@ -139,6 +148,11 @@ class BinaryOp : public Operator {
 
     virtual string to_string() const override;
 
+    virtual void setLHS(shared_ptr<Expression> lhs) { this->lhs = lhs; }
+    virtual void setRHS(shared_ptr<Expression> rhs) { this->rhs = rhs; }
+    virtual shared_ptr<Expression> getLHS() const { return lhs; }
+    virtual shared_ptr<Expression> getRHS() const { return rhs; }
+
     static bool classof(const Expression *expr) {
         return expr->get_kind() >= EXPR_BINARY && expr->get_kind() < EXPR_BINARY_LAST;
     }
@@ -146,6 +160,7 @@ class BinaryOp : public Operator {
 
 class AddOp : public BinaryOp {
   public:
+    AddOp() : BinaryOp(EXPR_ADDOP, "+", nullptr, nullptr) {}
     AddOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_ADDOP, "+", lhs, rhs) {}
 
     virtual PRIORITIES get_priority() const override { return PRIORITY_ADD; }
@@ -157,6 +172,7 @@ class AddOp : public BinaryOp {
 
 class SubOp : public BinaryOp {
   public:
+    SubOp() : BinaryOp(EXPR_SUBOP, "-", nullptr, nullptr) {}
     SubOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_SUBOP, "-", lhs, rhs) {}
 
     virtual PRIORITIES get_priority() const override { return PRIORITY_ADD; }
@@ -168,6 +184,7 @@ class SubOp : public BinaryOp {
 
 class MulOp : public BinaryOp {
   public:
+    MulOp() : BinaryOp(EXPR_MULOP, "*", nullptr, nullptr) {}
     MulOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_MULOP, "*", lhs, rhs) {}
 
     virtual PRIORITIES get_priority() const override { return PRIORITY_MUL; }
@@ -179,6 +196,7 @@ class MulOp : public BinaryOp {
 
 class DivOp : public BinaryOp {
   public:
+    DivOp() : BinaryOp(EXPR_DIVOP, "/", nullptr, nullptr) {}
     DivOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_DIVOP, "/", lhs, rhs) {}
 
     virtual PRIORITIES get_priority() const override { return PRIORITY_MUL; }
@@ -190,6 +208,7 @@ class DivOp : public BinaryOp {
 
 class AssignOp : public BinaryOp {
   public:
+    AssignOp() : BinaryOp(EXPR_ASSIGN, "=", nullptr, nullptr) {}
     AssignOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_ASSIGN, "=", lhs, rhs) {}
 
     virtual PRIORITIES get_priority() const override { return PRIORITY_ASSIGN; }
@@ -216,7 +235,8 @@ class DeclRef : public Expression {
 };
 
 class Number : public Expression {
-  using LL = long long;
+    using LL = long long;
+
   protected:
     std::variant<LL, double> value;
 
@@ -250,6 +270,10 @@ class Assignment : public Statement {
     Assignment(shared_ptr<DeclRef> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN), lhs(lhs), rhs(rhs) {}
 
     virtual string to_string() const override { return lhs->to_string() + " = " + rhs->to_string(); }
+    virtual shared_ptr<DeclRef> getLHS() const { return lhs; }
+    virtual shared_ptr<Expression> getRHS() const { return rhs; }
+    virtual void setLHS(shared_ptr<DeclRef> lhs) { this->lhs = lhs; }
+    virtual void setRHS(shared_ptr<Expression> rhs) { this->rhs = rhs; }
 
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_ASSIGN; }
 };
@@ -269,7 +293,7 @@ class ForStmt : public Statement {
   public:
     /**
      * @brief Construct a ForStmt object from a clang::ForStmt object.
-     * @warning Parent_for cannot be shared_ptr<ForStmt> because of the constructor uses this. 
+     * @warning Parent_for cannot be shared_ptr<ForStmt> because of the constructor uses this.
      * And shared_from_this() can only be called after the object is constructed.
      */
     ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for = nullptr);

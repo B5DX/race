@@ -1,9 +1,6 @@
 #include "llvm/Support/Casting.h"
 #include <IR/IR.h>
 
-using std::shared_ptr;
-using std::string;
-using std::vector;
 using namespace IR;
 
 string IR::generateParenthesesStr(const Expression *expr, const Operator *parent_op) {
@@ -94,16 +91,15 @@ shared_ptr<Expression> IR::parseExpression(const clang::Expr *expr) {
         auto index = parseExpression(array_subscript->getIdx());
         vector<shared_ptr<Expression>> indices;
         indices.push_back(index);
-        if (llvm::isa<IR::ArrayRef>(base.get())) {
-            auto sub_array = std::static_pointer_cast<IR::ArrayRef>(base);
+        if (auto sub_array = llvm_pointer_cast<IR::ArrayRef>(base)) {
             // ! If sub_array->getIndices() return a copy instead of a reference, you can't write
             // ! indices.insert(indices.end(), sub_array->getIndices().begin(), sub_array->getIndices().end());
             // ! Because the two sub_array->getIndices() is different vector and the first one will be destroyed so that the begin iterator is invalid.
             auto sub_indices = sub_array->getIndices();
             indices.insert(indices.end(), sub_indices.begin(), sub_indices.end());
             return std::make_shared<ArrayRef>(sub_array->getArray(), indices);
-        } else if (llvm::isa<IR::DeclRef>(base.get())) {
-            return std::make_shared<ArrayRef>(std::static_pointer_cast<DeclRef>(base), indices);
+        } else if (auto decl_ref = llvm_pointer_cast<IR::DeclRef>(base)) {
+            return std::make_shared<ArrayRef>(decl_ref, indices);
         } else {
             throw std::runtime_error("Unsupported array expression");
         }
@@ -127,9 +123,8 @@ void ForStmt::buildBounds(const clang::ForStmt *for_stmt) {
         }
         auto lhs = assign->getLHS();
         auto parsed_expr = parseExpression(lhs);
-        if (llvm::isa<DeclRef>(parsed_expr.get())) {
-            loop_var = std::static_pointer_cast<DeclRef>(parsed_expr);
-        } else {
+        loop_var = llvm_pointer_cast<DeclRef>(parsed_expr);
+        if (!loop_var) {
             throw std::runtime_error("Invalid for loop initialization");
         }
 
