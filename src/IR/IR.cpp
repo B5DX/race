@@ -98,7 +98,7 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr) {
             // ! Because the two sub_array->getIndices() is different vector and the first one will be destroyed so that the begin iterator is invalid.
             auto sub_indices = sub_array->getIndices();
             indices.insert(indices.end(), sub_indices.begin(), sub_indices.end());
-            return std::make_shared<ArrayRef>(sub_array->getArray(), indices);
+            return std::make_shared<ArrayRef>(sub_array->getArrayName(), indices);
         } else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(base)) {
             return std::make_shared<ArrayRef>(decl_ref, indices);
         } else {
@@ -174,7 +174,7 @@ void ForStmt::buildBounds(const clang::ForStmt *for_stmt) {
 void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
     if (auto inner_for_stmt = llvm::dyn_cast<clang::ForStmt>(stmt)) {
         this->body.push_back(std::make_shared<ForStmt>(inner_for_stmt, this));
-        llvm::errs() << "Inner for loop detected\n";
+        // llvm::errs() << "Inner for loop detected\n";
     } else if (auto assign_expr = llvm::dyn_cast<clang::BinaryOperator>(stmt)) {
         if (assign_expr->getOpcode() == clang::BinaryOperator::Opcode::BO_Assign) {
             auto lhs = assign_expr->getLHS();
@@ -244,6 +244,65 @@ vector<Block> ForStmt::getInnermostBlocks() const {
 
 ArrayRef::ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices)
     : Expression(EXPR_ARRAY_REF), array(array), indices(indices) {}
+
+// Don't support DivOp or UnaryOp yet.
+int exprEval(shared_ptr<ir::Expression> expr) {
+    if (auto num = llvm_pointer_cast<ir::Number>(expr)) {
+        return std::get<0>(num->getValue());
+    } else if (auto bop = llvm_pointer_cast<ir::BinaryOp>(expr)) {
+        if (llvm_isa<ir::DivOp>(bop)) {
+            throw std::runtime_error("DivOp is not supported yet.");
+        }
+        auto op = bop->getOpStr();
+        if (llvm_isa<ir::DeclRef>(bop->getLHS())) { // We assume DeclRef must be loop var here.
+            return exprEval(bop->getRHS());
+        } else if (llvm_isa<ir::DeclRef>(bop->getRHS())) {
+            return exprEval(bop->getLHS());
+        } else {
+            switch (op[0]) {
+            case '+':
+                return exprEval(bop->getLHS()) + exprEval(bop->getRHS());
+            case '-':
+                return exprEval(bop->getLHS()) - exprEval(bop->getRHS());
+            case '*':
+                return exprEval(bop->getLHS()) * exprEval(bop->getRHS());
+            default:
+                throw std::runtime_error("Unsupported binary operator.");
+            }
+        }
+    } 
+    // Only when there is only a loop var in the array index will the program execute to this elif.
+    else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(expr)) { 
+        return 0;
+    } else {
+        throw std::runtime_error("UnaryOp is not supported yet.");
+    }
+}
+
+shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr) {
+    if (auto decl_ref = llvm_pointer_cast<DeclRef>(expr)) {
+        return decl_ref;
+    } else if (auto bop = llvm_pointer_cast<BinaryOp>(expr)) {
+        auto lhs = searchDeclRef(bop->getLHS());
+        if (lhs) {
+            return lhs;
+        } else {
+            return searchDeclRef(bop->getRHS());
+        }
+    } else {
+        return nullptr;
+    }
+}
+
+std::map<string, int> ArrayRef::getDelta() const {
+    std::map<string, int> ret;
+    for (const auto &idx : indices) {
+        if (auto decl_ref = searchDeclRef(idx)) {
+            ret[decl_ref->to_string()] = exprEval(idx);
+        }
+    }
+    return ret;
+}
 
 string ArrayRef::to_string() const {
     string ret = array->to_string();

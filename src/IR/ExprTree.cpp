@@ -106,14 +106,10 @@ void ExprTreeNode::printTree(int depth) {
     for (int i = 0; i < depth; i++)
         llvm::outs() << "-";
 
-    if (auto op = ir::llvm_pointer_cast<ir::Operator>(src)) {
-        llvm::outs() << op->getOpStr() << ": [";
+    llvm::outs() << this->to_string() << ": [";
+    if (this->isOperator) {
         for (auto child : children) {
-            if (auto child_expr = llvm_pointer_cast<Operator>(child->getExpression())) {
-                llvm::outs() << child_expr->getOpStr() << ",";
-            } else {
-                llvm::outs() << child->to_string(false) << ",";
-            }
+            llvm::outs() << child->to_string() << ",";
         }
         llvm::outs() << "]\n";
         for (auto child : children) {

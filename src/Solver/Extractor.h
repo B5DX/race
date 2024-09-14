@@ -7,23 +7,34 @@
 namespace extract {
 
 using Forest = vector<shared_ptr<ir::ExprTree>>;
-using NodeVec = vector<shared_ptr<ir::ExprTreeNode>>;
+using TreeNodeVec = vector<shared_ptr<ir::ExprTreeNode>>;
 class Node;
 
 void extract(Forest expr_tree);
 
-class ArrayRefDelta {
-private:
-    vector<shared_ptr<DeclRef>> index_vars;
-    
-};
-
+// TODO: Only work for ArrayRef. Need to support DeclRef and Number.
 class Node {
-private:
+  private:
     shared_ptr<ir::ExprTreeNode> arr_left;
     shared_ptr<ir::ExprTreeNode> arr_right;
+    std::map<string, int> delta;
+
+  public:
+    Node(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeNode> right);
+
+    inline shared_ptr<ir::ExprTreeNode> getArrLeft() {
+        return arr_left;
+    }
+
+    inline shared_ptr<ir::ExprTreeNode> getArrRight() {
+        return arr_right;
+    }
+
+    bool operator==(const Node &other) const;
+
+    string to_string() const;
 };
 
-}
+} // namespace extract
 
 #endif

@@ -4,8 +4,6 @@
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/raw_ostream.h"
-// #include "IR/IR.h"
-// #include "IR/ExprTree.h"
 #include "Solver/Extractor.h"
 
 using namespace llvm;

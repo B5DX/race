@@ -85,7 +85,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
      */
     virtual void deposit();
 
-    vector<shared_ptr<ExprTreeNode>> getChildren() { return children; }
+    const vector<shared_ptr<ExprTreeNode>> &getChildren() { return children; }
 
     shared_ptr<ExprTreeNode> getParent() {
         if (parent.expired()) {
@@ -106,7 +106,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
 
     shared_ptr<DeclRef> getArrayName() {
         if (auto arf = llvm_pointer_cast<ArrayRef>(src)) {
-            return arf->getArray();
+            return arf->getArrayName();
         } else {
             return nullptr;
         }
@@ -120,13 +120,21 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
 
     inline bool isArrayRef() { return llvm_isa<ir::ArrayRef>(src); }
 
-    bool isLiteral() { return llvm_isa<Number>(src); }
+    inline bool isLiteral() { return llvm_isa<Number>(src); }
+
+    inline bool isDeclRef() { return llvm_isa<ir::DeclRef>(src); }
 
     virtual string to_string(bool onlyName = true) {
         if (isOperator) {
             return llvm_pointer_cast<Operator>(src)->getOpStr();
+        } else if (auto arr = llvm_pointer_cast<ArrayRef>(src)) {
+            if (onlyName) {
+                return arr->getArrayName()->to_string();
+            } else {
+                return arr->to_string();
+            }
         } else {
-            return llvm_pointer_cast<DeclRef>(src)->to_string();
+            return src->to_string();
         }
     }
 
@@ -138,7 +146,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
  */
 class ExprTree {
   protected:
-    using NodeVec = vector<shared_ptr<ExprTreeNode>>;
+    using TreeNodeVec = vector<shared_ptr<ExprTreeNode>>;
     shared_ptr<ExprTreeNode> root;     // The root of the AssignOp's rhs' expression tree.
     shared_ptr<Expression> assign_lhs; // The AssignOp's lhs.
 
@@ -224,7 +232,7 @@ class ExprTree {
     //     for (auto iter = this->begin(); iter != this->end(); ++iter) {
     //         auto node = *iter;
     //         if (auto arf = llvm_pointer_cast<ArrayRef>(node->getExpression())) {
-    //             if (arf->getArray() == target_arr) {
+    //             if (arf->getArrayName() == target_arr) {
     //                 auto spaceRefs = arf->getSpaceRefs();
     //                 spaceRefs.erase(spaceRefs.begin(), spaceRefs.end() - 1 - max_dim);
     //                 arf->setSpaceRefs(spaceRefs);

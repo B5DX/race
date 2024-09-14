@@ -4,6 +4,7 @@
 #include "llvm/Support/Casting.h"
 #include <functional>
 #include <variant>
+#include <map>
 
 namespace clang {
 class Expr;
@@ -262,6 +263,8 @@ class Number : public Expression {
     Number(unsigned value) : Expression(EXPR_NUMBER), value(static_cast<LL>(value)) {}
     Number(float value) : Expression(EXPR_NUMBER), value(static_cast<double>(value)) {}
 
+    std::variant<LL, double> getValue() const { return value; }
+
     virtual string to_string() const override {
         if (std::holds_alternative<LL>(value))
             return std::to_string(std::get<LL>(value));
@@ -354,7 +357,9 @@ class ArrayRef : public Expression {
 
     const vector<shared_ptr<Expression>> &getIndices() const { return indices; }
 
-    shared_ptr<DeclRef> getArray() const { return array; }
+    shared_ptr<DeclRef> getArrayName() const { return array; }
+
+    std::map<string, int> getDelta() const;
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_ARRAY_REF;

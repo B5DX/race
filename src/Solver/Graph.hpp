@@ -7,7 +7,6 @@
 #include <iostream>
 #include <list>
 #include <map>
-#include <type_traits>
 
 // template <typename T>
 // struct PointerLess {
@@ -113,9 +112,10 @@ class UDGraph {
 
     void printGraph() const {
         for (size_t i = 0; i < nodes.size(); i++) {
-            std::cout << *(nodes[i]) << ": ";
+            std::cout << i << ": ";
+            std::cout << nodes[i]->to_string() << " -> ";
             for (const auto &neighbor : adj_list[i]) {
-                std::cout << *neighbor << " ";
+                std::cout << node_to_index.at(neighbor) << ", ";
             }
             std::cout << std::endl;
         }
