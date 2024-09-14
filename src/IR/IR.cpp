@@ -245,7 +245,11 @@ vector<Block> ForStmt::getInnermostBlocks() const {
 ArrayRef::ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices)
     : Expression(EXPR_ARRAY_REF), array(array), indices(indices) {}
 
-// Don't support DivOp or UnaryOp yet.
+/**
+ * @brief Parse the value of the constant term in the expression. e.g. (1-i -> 1). (2*(i-2) -> -4). (3*j+2 -> 2).
+ * @warning Don't support DivOp or UnaryOp yet. Only support one loop var.
+ * TODO: support multiple loop vars.
+ */
 int exprEval(shared_ptr<ir::Expression> expr) {
     if (auto num = llvm_pointer_cast<ir::Number>(expr)) {
         return std::get<0>(num->getValue());
@@ -255,9 +259,27 @@ int exprEval(shared_ptr<ir::Expression> expr) {
         }
         auto op = bop->getOpStr();
         if (llvm_isa<ir::DeclRef>(bop->getLHS())) { // We assume DeclRef must be loop var here.
-            return exprEval(bop->getRHS());
+            switch (op[0]) {
+            case '-':
+                return -exprEval(bop->getRHS());
+            case '+':
+                return exprEval(bop->getRHS());
+            case '*':
+                return 0;
+            default:
+                throw std::runtime_error("Unsupported binary operator.");
+            }
         } else if (llvm_isa<ir::DeclRef>(bop->getRHS())) {
-            return exprEval(bop->getLHS());
+            switch (op[0]) {
+            case '-':
+                return exprEval(bop->getRHS());
+            case '+':
+                return exprEval(bop->getRHS());
+            case '*':
+                return 0;
+            default:
+                throw std::runtime_error("Unsupported binary operator.");
+            }
         } else {
             switch (op[0]) {
             case '+':
@@ -270,9 +292,9 @@ int exprEval(shared_ptr<ir::Expression> expr) {
                 throw std::runtime_error("Unsupported binary operator.");
             }
         }
-    } 
+    }
     // Only when there is only a loop var in the array index will the program execute to this elif.
-    else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(expr)) { 
+    else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(expr)) {
         return 0;
     } else {
         throw std::runtime_error("UnaryOp is not supported yet.");

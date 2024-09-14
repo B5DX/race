@@ -111,11 +111,13 @@ class UDGraph {
     }
 
     void printGraph() const {
+        std::cout << "Printing Graph. Output Format: NodeIndex: NodeValue -> Neighbor1(is_equal), Neighbor2(is_equal), ...\n";
         for (size_t i = 0; i < nodes.size(); i++) {
             std::cout << i << ": ";
-            std::cout << nodes[i]->to_string() << " -> ";
+            std::cout << nodes[i]->to_string() << ": ";
+            // std::cout << nodes[i]->to_string() << " -> " << "(" << nodes[i]->getHash() << ")" << ": ";
             for (const auto &neighbor : adj_list[i]) {
-                std::cout << node_to_index.at(neighbor) << ", ";
+                std::cout << node_to_index.at(neighbor) << "(" << (*nodes[i] == *neighbor) << ")" << ", ";
             }
             std::cout << std::endl;
         }
