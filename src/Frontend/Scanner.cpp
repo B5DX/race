@@ -4,6 +4,9 @@
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/raw_ostream.h"
+// #include "IR/IR.h"
+// #include "IR/ExprTree.h"
+#include "Solver/Extractor.h"
 
 using namespace llvm;
 using namespace clang;
@@ -16,7 +19,7 @@ struct MatchForStmtCallback : public clang::ast_matchers::MatchFinder::MatchCall
 
   private:
     MyPragmaHandler *avnPragmaHandler;
-    std::shared_ptr<IR::ForStmt> for_stmt;
+    std::shared_ptr<ir::ForStmt> for_stmt;
     unsigned diag_warn_potential_for;
 };
 
@@ -34,13 +37,13 @@ bool Scanner::BeginSourceFileAction(CompilerInstance &CI) {
     return true;
 }
 
-const ForStmt *outter_for_stmt = nullptr;
+const clang::ForStmt *outter_for_stmt = nullptr;
 
 void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
     const auto &Nodes = Result.Nodes;
     auto &Diag = Result.Context->getDiagnostics();
 
-    const auto *for_stmt = Nodes.getNodeAs<ForStmt>("for_stmt");
+    const auto *for_stmt = Nodes.getNodeAs<clang::ForStmt>("for_stmt");
     if (for_stmt) {
         if (avnPragmaHandler->ifBelongsToPragma(for_stmt->getBeginLoc())) {
             if (!outter_for_stmt) {
@@ -55,8 +58,18 @@ void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
                 }
             }
             Diag.Report(for_stmt->getBeginLoc(), diag_warn_potential_for);
-            this->for_stmt = std::make_shared<IR::ForStmt>(for_stmt);
+            // for_stmt->dump();
+            this->for_stmt = std::make_shared<ir::ForStmt>(for_stmt);
             llvm::outs() << this->for_stmt->to_string() << "\n";
+            llvm::outs() << "----------------------\n";
+            vector<ir::Block> blocks = this->for_stmt->getInnermostBlocks();
+            
+            for (const auto &block : blocks) {
+                auto assign = ir::llvm_pointer_cast<ir::Assignment>(block.front());
+                assert(assign);
+                shared_ptr<ir::ExprTree> expr_tree = make_shared<ir::ExprTree>(assign);
+                extract::extract({expr_tree});
+            }
         }
     }
 }

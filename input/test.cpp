@@ -31,9 +31,15 @@ void test(int x, int y) {
     for (int j = jms; j <= 20; j++) {
         for (i = -ims+1; i < 10; i++) {
             // Y[i] = Z[i] * W[i];
-            X[i][j] = C[j][i+1] + Y[i];
+            X[i][j] = Z[i] * C[j][i+1] + Y[i] * W[i];
             a = b * c + a * b;
         }
+        // for (i = -ims+1; i < 10; i++) {
+        //     Y[i] = Z[i] * W[i];
+        //     a = b * c + a * b;
+        // }
+        // Y[i] = C[j][i+1] + Z[i] * W[i];
+        // a = b * c + a * b;
     }
     
     #pragma avn end

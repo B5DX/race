@@ -3,7 +3,6 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "Frontend/PragmaHandler.h"
-#include "IR/IR.h"
 
 namespace clang {
 struct Scanner : public ASTFrontendAction {

@@ -1,11 +1,12 @@
-#include "llvm/Support/Casting.h"
-#include <IR/IR.h>
+#include "IR/IR.h"
+#include "clang/ASTMatchers/ASTMatchers.h"
 
-using namespace IR;
+using namespace ir;
 
-string IR::generateParenthesesStr(const Expression *expr, const Operator *parent_op) {
+string ir::generateParenthesesStr(const Expression *expr, const Operator *parent_op,
+                                  std::function<bool(int, int)> less_priority) {
     if (auto expr_op = llvm::dyn_cast<Operator>(expr)) {
-        if (expr_op->get_priority() < parent_op->get_priority()) {
+        if (less_priority(expr_op->get_priority(), parent_op->get_priority())) {
             return "(" + expr_op->to_string() + ")";
         } else {
             return expr->to_string();
@@ -16,7 +17,7 @@ string IR::generateParenthesesStr(const Expression *expr, const Operator *parent
 }
 
 string UnaryOp::to_string() const {
-    return op + generateParenthesesStr(expr.get(), this);
+    return op + generateParenthesesStr(expr.get(), this, std::less_equal<int>());
 }
 
 string SinOp::to_string() const {
@@ -29,8 +30,8 @@ string CosOp::to_string() const {
 
 string BinaryOp::to_string() const {
     string lhs_str, rhs_str;
-    lhs_str = generateParenthesesStr(lhs.get(), this);
-    rhs_str = generateParenthesesStr(rhs.get(), this);
+    lhs_str = generateParenthesesStr(lhs.get(), this, std::less<int>());
+    rhs_str = generateParenthesesStr(rhs.get(), this, std::less_equal<int>());
     return lhs_str + " " + op + " " + rhs_str;
 }
 
@@ -39,9 +40,9 @@ string AssignOp::to_string() const {
 }
 
 /**
- * @brief Recursively parse an expression from clang::Expr to IR::Expression. If failed, throw an exception.
+ * @brief Recursively parse an expression from clang::Expr to ir::Expression. If failed, throw an exception.
  */
-shared_ptr<Expression> IR::parseExpression(const clang::Expr *expr) {
+shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr) {
     if (auto bin_op = llvm::dyn_cast<clang::BinaryOperator>(expr)) {
         auto lhs = parseExpression(bin_op->getLHS());
         auto rhs = parseExpression(bin_op->getRHS());
@@ -91,19 +92,22 @@ shared_ptr<Expression> IR::parseExpression(const clang::Expr *expr) {
         auto index = parseExpression(array_subscript->getIdx());
         vector<shared_ptr<Expression>> indices;
         indices.push_back(index);
-        if (auto sub_array = llvm_pointer_cast<IR::ArrayRef>(base)) {
+        if (auto sub_array = llvm_pointer_cast<ir::ArrayRef>(base)) {
             // ! If sub_array->getIndices() return a copy instead of a reference, you can't write
             // ! indices.insert(indices.end(), sub_array->getIndices().begin(), sub_array->getIndices().end());
             // ! Because the two sub_array->getIndices() is different vector and the first one will be destroyed so that the begin iterator is invalid.
             auto sub_indices = sub_array->getIndices();
             indices.insert(indices.end(), sub_indices.begin(), sub_indices.end());
             return std::make_shared<ArrayRef>(sub_array->getArray(), indices);
-        } else if (auto decl_ref = llvm_pointer_cast<IR::DeclRef>(base)) {
+        } else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(base)) {
             return std::make_shared<ArrayRef>(decl_ref, indices);
         } else {
             throw std::runtime_error("Unsupported array expression");
         }
+    } else if (auto paren_expr = llvm::dyn_cast<clang::ParenExpr>(expr)) {
+        return parseExpression(paren_expr->getSubExpr());
     }
+    expr->dump();
     throw std::runtime_error("Unsupported expression");
 }
 
@@ -178,20 +182,20 @@ void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
             auto lhs_expr = parseExpression(lhs);
             auto rhs_expr = parseExpression(rhs);
 
-            this->body.push_back(std::make_shared<IR::Assignment>(
-                std::static_pointer_cast<IR::DeclRef>(lhs_expr), rhs_expr));
+            this->body.push_back(std::make_shared<ir::Assignment>(
+                std::static_pointer_cast<ir::DeclRef>(lhs_expr), rhs_expr));
         }
     }
 }
 
 ForStmt::ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for) : Statement(STMT_FOR) {
     this->buildBounds(for_stmt);
+    index_vars.push_back(loop_var);
     if (parent_for) {
-        index_vars = parent_for->index_vars;
-        index_vars.push_back(loop_var);
+        const auto &parent_index_vars = parent_for->index_vars;
+        index_vars.insert(index_vars.end(), parent_index_vars.begin(), parent_index_vars.end());
         this->depth = parent_for->depth + 1;
     } else {
-        index_vars.push_back(loop_var);
         this->depth = 0;
     }
 
@@ -215,6 +219,26 @@ string ForStmt::to_string() const {
         ret += indent + "    " + stmt->to_string() + "\n";
     }
     ret += indent + "}";
+    return ret;
+}
+
+vector<Block> ForStmt::getInnermostBlocks() const {
+    vector<Block> ret;
+    for (size_t idx = 0; idx < body.size();) {
+        const auto &stmt = body[idx];
+        if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+            auto inner_blocks = inner_for->getInnermostBlocks();
+            ret.insert(ret.end(), inner_blocks.begin(), inner_blocks.end());
+            ++idx;
+        } else if (llvm_isa<Assignment>(stmt)) {
+            Block assign_block;
+            do {
+                assign_block.push_back(body[idx]);
+                ++idx;
+            } while (idx < body.size() && llvm_isa<Assignment>(body[idx]));
+            ret.push_back(assign_block);
+        }
+    }
     return ret;
 }
 

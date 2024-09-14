@@ -1,14 +1,17 @@
 #ifndef IR_H
 #define IR_H
-#include "clang/ASTMatchers/ASTMatchers.h"
 #include "common.h"
+#include "llvm/Support/Casting.h"
+#include <functional>
 #include <variant>
 
-namespace IR {
+namespace clang {
+class Expr;
+class Stmt;
+class ForStmt;
+} // namespace clang
 
-using std::shared_ptr;
-using std::string;
-using std::vector;
+namespace ir {
 
 enum PRIORITIES {
     PRIORITY_ASSIGN = 0,
@@ -68,6 +71,8 @@ class Expression {
     virtual string to_string() const = 0;
 };
 
+using Block = vector<shared_ptr<Statement>>;
+
 template <typename To, typename From>
 inline std::shared_ptr<To> llvm_pointer_cast(const std::shared_ptr<From> &e) {
     if (llvm::isa<To>(e.get())) {
@@ -77,13 +82,23 @@ inline std::shared_ptr<To> llvm_pointer_cast(const std::shared_ptr<From> &e) {
     }
 }
 
+template <typename To, typename From>
+inline bool llvm_isa(const std::shared_ptr<From> &e) {
+    return llvm::isa<To>(e.get());
+}
+
 class Operator : public Expression {
+  protected:
+    const string op;
+
   public:
     Operator(ExprKind kind) : Expression(kind) {}
+    Operator(ExprKind kind, const string &op) : Expression(kind), op(op) {}
 
     virtual ~Operator() {}
     virtual string to_string() const = 0;
     virtual PRIORITIES get_priority() const = 0;
+    virtual string getOpStr() const { return op; }
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() >= EXPR_OPERATOR && expr->get_kind() < EXPR_OPERATOR_LAST;
@@ -92,12 +107,11 @@ class Operator : public Expression {
 
 class UnaryOp : public Operator {
   protected:
-    const string op;
     shared_ptr<Expression> expr;
 
   public:
     UnaryOp(ExprKind kind, const string &op, shared_ptr<Expression> expr)
-        : Operator(kind), op(op), expr(expr) {}
+        : Operator(kind, op), expr(expr) {}
     virtual PRIORITIES get_priority() const override { return PRIORITY_UNARY; }
     virtual string to_string() const override;
 
@@ -139,12 +153,11 @@ class CosOp : public UnaryOp {
 
 class BinaryOp : public Operator {
   protected:
-    const string op;
     shared_ptr<Expression> lhs, rhs;
 
   public:
     BinaryOp(ExprKind kind, const string &op, shared_ptr<Expression> lhs, shared_ptr<Expression> rhs)
-        : Operator(kind), op(op), lhs(lhs), rhs(rhs) {}
+        : Operator(kind, op), lhs(lhs), rhs(rhs) {}
 
     virtual string to_string() const override;
 
@@ -286,7 +299,11 @@ class ForStmt : public Statement {
   protected:
     shared_ptr<DeclRef> loop_var;
     shared_ptr<Expression> begin, end; // begin <= loop_var <= end
-    vector<shared_ptr<Statement>> body;
+    Block body;
+    /**
+     * @brief The front element is the innermost index.
+     * e.g. for(j...) {for(i...) {}} -> index_vars = {i, j}.
+     */
     vector<shared_ptr<DeclRef>> index_vars;
     unsigned depth;
 
@@ -299,6 +316,9 @@ class ForStmt : public Statement {
     ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for = nullptr);
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_FOR; }
     virtual string to_string() const override;
+
+    // TODO: Block may be defined as a class named AssignBlock inherited from Statement, which can contain the loop_vars information for ArrayRef's index.
+    vector<Block> getInnermostBlocks() const;
 };
 
 // class ArrayIndex {
@@ -325,7 +345,7 @@ class ArrayRef : public Expression {
   protected:
     shared_ptr<DeclRef> array;
     /**
-     * @brief The front element is the innermost index. e.g. X[j][i] -> indices = {i, j}.
+     * @brief The front element is the innermost index. e.g. X[j][i+1] -> indices = {i+1, j}.
      */
     vector<shared_ptr<Expression>> indices;
 
@@ -344,8 +364,14 @@ class ArrayRef : public Expression {
 
 shared_ptr<Expression> parseExpression(const clang::Expr *expr);
 
-inline string generateParenthesesStr(const Expression *expr, const Operator *parent_op);
+/**
+ * @brief Generate a string representation of the expression with parentheses.
+ * @param less_priority Control the parentheses conciseness. less_equal will consider the most parentheses, while less will ignore the parentheses of the same priority.
+ */
+inline string generateParenthesesStr(const Expression *expr, const Operator *parent_op,
+                                     std::function<bool(int, int)> less_priority = std::less_equal<int>());
+// inline string generateParenthesesStr(const Expression *expr, const Operator *parent_op);
 
-} // namespace IR
+} // namespace ir
 
 #endif
