@@ -322,6 +322,10 @@ class ForStmt : public Statement {
 
     // TODO: Block may be defined as a class named AssignBlock inherited from Statement, which can contain the loop_vars information for ArrayRef's index.
     vector<Block> getInnermostBlocks() const;
+
+    const vector<shared_ptr<DeclRef>> &getLoopVars() const {
+        return index_vars;
+    }
 };
 
 // class ArrayIndex {
@@ -351,9 +355,11 @@ class ArrayRef : public Expression {
      * @brief The front element is the innermost index. e.g. X[j][i+1] -> indices = {i+1, j}.
      */
     vector<shared_ptr<Expression>> indices;
+    ForStmt *parent_loop;
 
   public:
-    ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices);
+    ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices, ForStmt *parent_loop)
+        : Expression(EXPR_ARRAY_REF), array(array), indices(indices), parent_loop(parent_loop) {};
 
     const vector<shared_ptr<Expression>> &getIndices() const { return indices; }
 
@@ -361,13 +367,25 @@ class ArrayRef : public Expression {
 
     std::map<string, int> getDelta() const;
 
+    ForStmt *getParentLoop() const { return parent_loop; }
+
+    vector<shared_ptr<DeclRef>> getLoopVars() {
+        if (!parent_loop) return vector<shared_ptr<DeclRef>>();
+        return parent_loop->getLoopVars();
+    }
+
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_ARRAY_REF;
     }
     virtual string to_string() const override;
 };
 
-shared_ptr<Expression> parseExpression(const clang::Expr *expr);
+/**
+ * @brief Recursively parse an expression from clang::Expr to ir::Expression. If failed, throw an exception.
+ * @param expr The clang::Expr to be parsed.
+ * @param parent_loop The parent loop of the expression. Default to nullptr. Only used for ArrayRef.
+ */
+shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_loop=nullptr);
 
 /**
  * @brief Generate a string representation of the expression with parentheses.

@@ -39,10 +39,7 @@ string AssignOp::to_string() const {
     return lhs->to_string() + " = " + rhs->to_string();
 }
 
-/**
- * @brief Recursively parse an expression from clang::Expr to ir::Expression. If failed, throw an exception.
- */
-shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr) {
+shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *parent_loop) {
     if (auto bin_op = llvm::dyn_cast<clang::BinaryOperator>(expr)) {
         auto lhs = parseExpression(bin_op->getLHS());
         auto rhs = parseExpression(bin_op->getRHS());
@@ -98,9 +95,9 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr) {
             // ! Because the two sub_array->getIndices() is different vector and the first one will be destroyed so that the begin iterator is invalid.
             auto sub_indices = sub_array->getIndices();
             indices.insert(indices.end(), sub_indices.begin(), sub_indices.end());
-            return std::make_shared<ArrayRef>(sub_array->getArrayName(), indices);
+            return std::make_shared<ArrayRef>(sub_array->getArrayName(), indices, parent_loop);
         } else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(base)) {
-            return std::make_shared<ArrayRef>(decl_ref, indices);
+            return std::make_shared<ArrayRef>(decl_ref, indices, parent_loop);
         } else {
             throw std::runtime_error("Unsupported array expression");
         }
@@ -179,8 +176,8 @@ void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
         if (assign_expr->getOpcode() == clang::BinaryOperator::Opcode::BO_Assign) {
             auto lhs = assign_expr->getLHS();
             auto rhs = assign_expr->getRHS();
-            auto lhs_expr = parseExpression(lhs);
-            auto rhs_expr = parseExpression(rhs);
+            auto lhs_expr = parseExpression(lhs, this);
+            auto rhs_expr = parseExpression(rhs, this);
 
             this->body.push_back(std::make_shared<ir::Assignment>(
                 std::static_pointer_cast<ir::DeclRef>(lhs_expr), rhs_expr));
@@ -242,9 +239,6 @@ vector<Block> ForStmt::getInnermostBlocks() const {
     return ret;
 }
 
-ArrayRef::ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices)
-    : Expression(EXPR_ARRAY_REF), array(array), indices(indices) {}
-
 /**
  * @brief Parse the value of the constant term in the expression. e.g. (1-i -> 1). (2*(i-2) -> -4). (3*j+2 -> 2).
  * @warning Don't support DivOp or UnaryOp yet. Only support one loop var.
@@ -301,6 +295,7 @@ int exprEval(shared_ptr<ir::Expression> expr) {
     }
 }
 
+// TODO: Should be merged with exprEval for supporting multiple loop vars.
 shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr) {
     if (auto decl_ref = llvm_pointer_cast<DeclRef>(expr)) {
         return decl_ref;
@@ -316,6 +311,7 @@ shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr) {
     }
 }
 
+// TODO: Should be merged with exprEval for supporting multiple loop vars.
 std::map<string, int> ArrayRef::getDelta() const {
     std::map<string, int> ret;
     for (const auto &idx : indices) {

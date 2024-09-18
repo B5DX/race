@@ -1,4 +1,5 @@
 #include "Solver/Extractor.h"
+#include "Solver/MatchSolver.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace ir;
@@ -13,7 +14,7 @@ void collectCandidates(shared_ptr<ExprTree> tree, std::map<string, vector<TreeNo
 
         TreeNodeVec cur_cand;
         for (auto child : node->getChildren()) {
-            if (child->isArrayRef()) { // Ignore DeclRef and Number.
+            if (child->isLeafNode()) {
                 cur_cand.push_back(child);
             }
         }
@@ -21,6 +22,82 @@ void collectCandidates(shared_ptr<ExprTree> tree, std::map<string, vector<TreeNo
             assert(node->isOperatorNode());
             result[node->to_string()].push_back(cur_cand);
         }
+    }
+}
+
+/**
+ * @brief Replace the matched pairs in match_cands with new ArrayRef.
+ * 
+ * @return shared_ptr<ArrayRef> The new Intermediate Variable Array.
+ */
+// shared_ptr<ir::ArrayRef> replaceMatchCand(const vector<TreeNodeVec> &match_cands, int &iv_cnt, int avn_cnt) {
+//     // Create new Array.
+//     // ! disp should be DefinedSpaces, while naive 0 indexes are created here.
+    
+//     // Get union of dimensions.
+//     set<int> dims;
+//     for (auto i : match_cands[0]) {
+//         for (auto disp : i->getDisplacement()) {
+//             dims.insert(disp.first);
+//         }
+//     }
+    
+//     vector<shared_ptr<Expression>> disp;
+//     for (int i = 0; i < dims.size(); i++) {
+//         disp.push_back(make_shared<IntLiteral>(0));
+//     }
+//     shared_ptr<Array> array = make_shared<Array>("past_arr_" + to_string(avn_cnt) + "_" + to_string(iv_cnt), disp, 0);
+//     array->setDefiningSpace(make_shared<Space>("tmp_space" + to_string(iv_cnt), dims.size()));
+//     iv_cnt++;
+    
+//     for (auto match : match_cands) {
+// #ifdef DEBUG
+//         cout << "MatchCandidate {" << endl;
+//         cout << match[0]->toString(false) << endl;
+//         cout << match[1]->toString(false) << endl;
+//         cout << "}" << endl;
+// #endif
+//         auto parent = match[0]->getParent();
+//         parent->eraseChild(match[0]);
+//         parent->eraseChild(match[1]);
+        
+//         // Create new ArrayRef.
+//         shared_ptr<ArrayRef> arf = nullptr;
+//         auto new_arr_dim = IVInfoManager::mergeDisp(match[0]->getDisplacement(), match[1]->getDisplacement());
+//         vector<shared_ptr<SpaceRef>> space_refs;
+//         for (auto i : new_arr_dim) {
+//             // If SpaceRef.isConstant is true, the ArrayRef in generated code will have no index variable like i,j,k. So it is set to false.
+//             space_refs.push_back(make_shared<SpaceRef>(make_shared<Add>(make_shared<Dim>(i.first), make_shared<IntLiteral>(i.second)), false));
+//         }
+//         arf = make_shared<ArrayRef>(array, nullptr, space_refs);
+        
+//         auto new_node = make_shared<ExprTreeNode>(arf, parent);
+//         parent->addChild(new_node);
+//         if (parent->getChildren().size() == 1) {
+//             auto pp = parent->getParent();
+//             if (pp != nullptr) {
+//                 pp->eraseChild(parent);
+//                 pp->addChild(new_node);
+//                 new_node->setParent(pp);
+//             }
+//         }
+//     }
+//     return array;
+// }
+
+shared_ptr<ArrayRef> replaceMatchCand(const vector<shared_ptr<DeltaNode>> &match_cands, int &iv_cnt, int avn_cnt) {
+    std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
+    for (const auto &node : match_cands) {
+        hash_node_map[node->getHash()].push_back(node);
+    }
+    for (const auto &iter : hash_node_map) {
+        if (iter.second.size() < 2) { // TODO: Useless node. There may be some way to optimize in solve().
+            continue;
+        }
+        // Create new ArrayRef.
+        auto l_arr_node = iter.second[0]->getArrLeft()->getExpression();
+        auto r_arr_node = iter.second[0]->getArrRight()->getExpression();
+        // TODO: Unify ArrayRef DeclRef and Number.
     }
 }
 
@@ -48,8 +125,9 @@ void extract(Forest expr_tree) {
     //     }
     // }
 
-    UDGraph<shared_ptr<DeltaNode>> graph;
+    UDGraph<shared_ptr<DeltaNode>> delta_graph;
     bool commutable = true;
+    // Begin to construct the delta-graph.
     for (auto op : op_list) {
         if (op == "-" || op == "/") {
             commutable = false;
@@ -64,7 +142,7 @@ void extract(Forest expr_tree) {
             for (size_t i = 0; i < each_node_vec.size(); i++) {
                 for (size_t j = i + 1; j < each_node_vec.size(); j++) {
                     auto node = make_shared<DeltaNode>(each_node_vec[i], each_node_vec[j], commutable);
-                    graph.addNode(node);
+                    delta_graph.addNode(node);
                     node_map[i].push_back(node);
                     node_map[j].push_back(node);
                 }
@@ -72,89 +150,36 @@ void extract(Forest expr_tree) {
             for (auto iter : node_map) {
                 for (size_t i = 0; i < iter.second.size(); i++) {
                     for (size_t j = i + 1; j < iter.second.size(); j++) {
-                        graph.addEdge(iter.second[i], iter.second[j]);
+                        delta_graph.addEdge(iter.second[i], iter.second[j]);
                     }
                 }
             }
-        } 
+        }
+    } // End of constructing the delta-delta_graph.
+    // std::cout << "-------------Graph-------------\n";
+    // delta_graph.printGraph();
+
+    // Solve the delta-graph.
+    Solver solver;
+    std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
+    for (const auto &node : delta_graph.getNodes()) {
+        hash_node_map[node->getHash()].push_back(node);
     }
-    graph.printGraph();
-}
-
-DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeNode> right, bool commutable)
-    : arr_left(left), arr_right(right) {
-#ifdef DEBUG
-    llvm::outs() << "Constructing DeltaNode: " << arr_left->to_string(false) << " -> " << arr_right->to_string(false) << "\n";
-    llvm::outs() << commutable << "\n";
-#endif
-    auto left_indices = ir::llvm_pointer_cast<ir::ArrayRef>(arr_left->getExpression())->getDelta();
-    auto right_indices = ir::llvm_pointer_cast<ir::ArrayRef>(arr_right->getExpression())->getDelta();
-
-    if (commutable) { // Make sure the left array is "smaller" than the right array.
-        std::set<string> keys;
-        for (const auto &left : left_indices) {
-            keys.insert(left.first);
-        }
-        for (const auto &right : right_indices) {
-            keys.insert(right.first);
-        }
-        
-        if (arr_left->to_string(true) > arr_right->to_string(true)) {
-            std::swap(this->arr_left, this->arr_right);
-            std::swap(left_indices, right_indices);
-        } else if (arr_left->to_string(true) == arr_right->to_string(true)) {
-            for (const auto &key : keys) {
-                auto left_iter = left_indices.find(key);
-                auto right_iter = right_indices.find(key);
-                if (left_iter != left_indices.end() && right_iter != right_indices.end()) {
-                    if (left_iter->second > right_iter->second) {
-                        std::swap(this->arr_left, this->arr_right);
-                        std::swap(left_indices, right_indices);
-                        break;
-                    }
-                } else if (right_iter != right_indices.end()) {
-                    std::swap(this->arr_left, this->arr_right);
-                    std::swap(left_indices, right_indices);
-                    break;
-                } else {
-                    break;
-                }
-            }
+    vector<shared_ptr<DeltaNode>> filtered_nodes;
+    for (const auto &iter : hash_node_map) {
+        if (iter.second.size() > 1) {
+            filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
         }
     }
+    const auto &result = solver.solve(delta_graph, filtered_nodes);
+    
+    std::cout << "-------------Result-------------\n";
+    std::cout << filtered_nodes.size() << " nodes in total.\n";
+    for (const auto &node : result) {
+        std::cout << *node << "\n";
+    }
 
-    for (const auto &left : left_indices) {
-        if (right_indices.find(left.first) != right_indices.end()) {
-            delta[left.first] = right_indices[left.first] - left.second;
-        }
-    }
-}
 
-string DeltaNode::to_string() const {
-    string ret = arr_left->to_string() + " -> " + arr_right->to_string() + ": ";
-    for (const auto &pair : delta) {
-        ret += pair.first + " " + std::to_string(pair.second) + ", ";
-    }
-    return ret;
-    // llvm::outs() << arr_left->to_string() << " -> " << arr_right->to_string() << ": ";
-    // for (const auto &pair : delta) {
-    //     llvm::outs() << pair.first << " " << pair.second << ", ";
-    // }
-    // llvm::outs() << "\n";
-}
-
-bool DeltaNode::operator==(const DeltaNode &other) const {
-    if (arr_left->to_string() != other.arr_left->to_string() ||
-        arr_right->to_string() != other.arr_right->to_string()) {
-        return false;
-    }
-    for (const auto &pair : delta) {
-        if (other.delta.find(pair.first) == other.delta.end() ||
-            other.delta.at(pair.first) != pair.second) {
-            return false;
-        }
-    }
-    return true;
 }
 
 } // namespace extract
