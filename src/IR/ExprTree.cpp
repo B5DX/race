@@ -1,6 +1,7 @@
 #include "IR/ExprTree.h"
 #include "llvm/Support/raw_ostream.h"
-#include <iostream>
+#include <queue>
+using std::deque;
 
 using namespace ir;
 
@@ -46,16 +47,16 @@ void ExprTreeNode::deposit() {
         children[i]->deposit();
     }
     // copy children to queue
-    queue<shared_ptr<ExprTreeNode>> node_queue;
+    deque<shared_ptr<ExprTreeNode>> node_queue;
     for (auto child : children) {
-        node_queue.push(child);
+        node_queue.push_back(child);
     }
     // Build new binary tree. The last one node in the queue is the new root, which will replace this node.
     while (node_queue.size() > 1) {
         auto node1 = node_queue.front();
-        node_queue.pop();
+        node_queue.pop_front();
         auto node2 = node_queue.front();
-        node_queue.pop();
+        node_queue.pop_front();
         shared_ptr<BinaryOp> biop;
         // ! Note that src here may have empty member lhs or rhs.
         if (auto add = llvm_pointer_cast<AddOp>(src)) {
@@ -77,7 +78,7 @@ void ExprTreeNode::deposit() {
         node2->setParent(new_expr_node);
         new_expr_node->addChild(node1);
         new_expr_node->addChild(node2);
-        node_queue.push(new_expr_node);
+        node_queue.push_front(new_expr_node);
     }
     // copy new root's info to replace this node.
     children.clear();
@@ -131,23 +132,6 @@ void ExprTree::buildTree(shared_ptr<ExprTreeNode> root, shared_ptr<ir::Expressio
     } else {
         return;
     }
-}
-
-set<shared_ptr<ExprTreeNode>> ExprTree::getUsedArrayRefs() {
-    set<shared_ptr<ExprTreeNode>> res;
-    queue<shared_ptr<ExprTreeNode>> node_queue;
-    node_queue.push(root);
-    while (!node_queue.empty()) {
-        auto node = node_queue.front();
-        node_queue.pop();
-        if (auto arf = llvm_pointer_cast<ArrayRef>(node->getExpression())) {
-            res.insert(node);
-        }
-        for (auto child : node->getChildren()) {
-            node_queue.push(child);
-        }
-    }
-    return res;
 }
 
 void ExprTree::replaceArf2Scalar(shared_ptr<ArrayRef> arf, shared_ptr<DeclRef> scalar) {

@@ -3,7 +3,6 @@
 
 #include "IR/IR.h"
 #include <functional>
-#include <queue>
 #include <set>
 #include <stack>
 
@@ -11,7 +10,6 @@ namespace ir {
 
 using std::make_shared;
 using std::pair;
-using std::queue;
 using std::set;
 using std::shared_ptr;
 using std::vector;
@@ -66,7 +64,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     void hoist();
 
     /**
-     * @brief Deposit the tree to a binary form using post traverse.
+     * @brief Deposit the tree to a binary form using post traversal.
      * @details
      * This method transforms the tree to a binary tree with relatively low depth.
      * TODO: MinusOp and DivOp May be wrong.
@@ -215,8 +213,6 @@ class ExprTree {
     virtual void deposit() { root->deposit(); assign->setRHS(root->getExpression()); }
 
     shared_ptr<ExprTreeNode> getRoot() { return root; }
-
-    set<shared_ptr<ExprTreeNode>> getUsedArrayRefs();
 
     // void compressDim(shared_ptr<DeclRef> target_arr, int max_dim) {
     //     for (auto iter = this->begin(); iter != this->end(); ++iter) {

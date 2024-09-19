@@ -41,7 +41,7 @@ int ***A, B[10], C[10], D[10];
 
 int main() {
     int i, j, k, x, y, z;
-    int tst;
+    int test1, test2;
     // #pragma avn begin
     // for (x = j_start; x <= jtf; x++) {
     //     for (y = k_start; y <= ktf; y++) {
@@ -70,11 +70,11 @@ int main() {
         for (j = j_start; j <= jtf; j++) {
             for (k = k_start; k <= ktf; k++) {
                 for (i = i_start; i <= itf; i++) {
-                    // mkrdxm = (tst*C[i] + B[i+1] + tst*C[i+2] + B[i+3]);
-                    // mkrdxm = msfux[j][i] * msfuy[j][1+i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]);
+                    mkrdxm = (test2*test1*C[i] + B[i+1] + test2*test1*C[i+2] + B[i+3]);
+                    mkrdxm = msfux[j][i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]) * msfuy[j][1+i];
 
-                    mkrdxm=((((((msfux[j][i]/msfuy[j][i]))*(xkmhd[j][k][i]+xkmhd[j][k][i-1])))*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j][i-1])+c2[k])))*rdx);
-                    mkrdxp=((((((msfux[j][i+1]/msfuy[j][i+1]))*(xkmhd[j][k][i+1]+xkmhd[j][k][i])))*(((c1[k]*MUT[j][i+1])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdx);
+                    // mkrdxm=((((((msfux[j][i]/msfuy[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j][k][i-1]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j][i-1])+c2[k])))*rdx);
+                    // mkrdxp=((((((msfux[j][i+1]/msfuy[j][i+1])*0.500000)*(xkmhd[j][k][i+1]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j][i+1])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdx);
                     // // // mrdx=((msftx[j][i]*msfty[j][i])*rdx);
                     // mkrdym=((((((msfvy[j][i]*msfvx_inv[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j-1][k][i]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j-1][i])+c2[k])))*rdy);
                     // mkrdyp=((((((msfvy[j+1][i]*msfvx_inv[j+1][i])*0.500000)*(xkmhd[j+1][k][i]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j+1][i])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdy);

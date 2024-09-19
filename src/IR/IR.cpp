@@ -348,3 +348,29 @@ string ArrayRef::to_string() const {
     }
     return ret;
 }
+
+shared_ptr<ir::BinaryOp> ir::buildBinaryOp(string op, shared_ptr<ir::Expression> l_expr, shared_ptr<ir::Expression> r_expr) {
+    if (op == "+") {
+        return std::make_shared<ir::AddOp>(l_expr, r_expr);
+    } else if (op == "-") {
+        return std::make_shared<ir::SubOp>(l_expr, r_expr);
+    } else if (op == "*") {
+        return std::make_shared<ir::MulOp>(l_expr, r_expr);
+    } else if (op == "/") {
+        return std::make_shared<ir::DivOp>(l_expr, r_expr);
+    } else {
+        throw std::runtime_error("Unsupported operator.");
+    }
+}
+
+shared_ptr<ir::UnaryOp> ir::buildUnaryOp(string op, shared_ptr<ir::Expression> expr) {
+    if (op == "sin") {
+        return std::make_shared<ir::SinOp>(expr);
+    } else if (op == "cos") {
+        return std::make_shared<ir::CosOp>(expr);
+    } else if (op == "-") {
+        return std::make_shared<ir::NegOp>(expr);
+    } else {
+        throw std::runtime_error("Unsupported operator.");
+    }
+}

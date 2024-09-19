@@ -9,8 +9,6 @@
 #include "Frontend/PragmaHandler.h"
 #include "Frontend/Scanner.h"
 
-#include "IR/IR.h"
-
 using namespace llvm;
 using namespace clang;
 using namespace clang::tooling;

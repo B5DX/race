@@ -39,7 +39,7 @@ private:
     ir::ForStmt *parent_for;
 
 public:
-    IVInfoManager() {}
+    IVInfoManager() : parent_for(nullptr) {}
     // IVInfoManager(ir::ForStmt *parent_for) : parent_for(parent_for) {}
 
     void addIVInfo(const string &iv_name, const IVInfo &iv_info) {
@@ -70,7 +70,17 @@ public:
     // Register an array with two operands.
     void registerArray(string array, shared_ptr<ir::ExprTreeNode> l_expr, shared_ptr<ir::ExprTreeNode> r_expr);
 
+    /**
+     * @brief Get the ArrayRef or DeclRef Expression of an array with two operands.
+     * e.g. T[j][i] (= A[i+1] + B[j][i-1]) is registered. getExpression("T", A[i], B[j+1][i-2]) will return T[j+1][i-1].
+     */
     shared_ptr<ir::Expression> getExpression(string array, shared_ptr<ir::ExprTreeNode> l_expr_node, shared_ptr<ir::ExprTreeNode> r_expr_node);
+
+    /**
+     * @brief Get the construct expression of an array.
+     * e.g. T[j][i] (= A[i+1] + B[j][i-1]) is registered. getConstructExpr("T") will return A[i+1]+B[j][i-1].
+     */
+    shared_ptr<ir::Expression> getConstructExpr(const string &array);
 
     void printInfo();
 

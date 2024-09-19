@@ -216,6 +216,42 @@ shared_ptr<ir::Expression> IVInfoManager::getExpression(string array, shared_ptr
     }
 }
 
+shared_ptr<ir::Expression> IVInfoManager::getConstructExpr(const string &array) {
+    if (!hasIVInfo(array)) {
+        throw std::runtime_error("Array not registered.");
+    }
+    auto info = iv_info_map[array];
+    if (info.operands.empty()) {
+        return std::make_shared<ir::DeclRef>(array);
+    }
+    shared_ptr<ir::Expression> l_expr, r_expr;
+    if (this->isNativeArray(info.operands[0])) {
+        if (info.disp[0].empty()) {
+            l_expr = std::make_shared<ir::DeclRef>(info.operands[0]);
+        } else {
+            l_expr = std::make_shared<ir::ArrayRef>(info.operands[0], info.disp[0], parent_for);
+        }
+    } else {
+        l_expr = getConstructExpr(info.operands[0]);
+    }
+
+    if (info.operands.size() > 1) { // binary operator
+        if (this->isNativeArray(info.operands[1])) {
+            if (info.disp[1].empty()) {
+                r_expr = std::make_shared<ir::DeclRef>(info.operands[1]);
+            } else {
+                r_expr = std::make_shared<ir::ArrayRef>(info.operands[1], info.disp[1], parent_for);
+            }
+        } else {
+            r_expr = getConstructExpr(info.operands[1]);
+        }
+        return ir::buildBinaryOp(info.op, l_expr, r_expr);
+    } else {
+        return ir::buildUnaryOp(info.op, l_expr);
+    }
+}
+
+
 void IVInfoManager::printInfo() {
     std::cout << "Registered Arrays: " << std::endl;
     for (auto arr : iv_info_map) {

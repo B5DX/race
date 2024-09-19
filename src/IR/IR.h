@@ -501,7 +501,7 @@ public:
         return array->to_string() < other.array->to_string();
     }
 
-    virtual shared_ptr<Expression> clone() const override{
+    virtual shared_ptr<Expression> clone() const override {
         vector<shared_ptr<Expression>> new_indices;
         for (const auto &idx : indices) {
             new_indices.push_back(idx->clone());
@@ -547,6 +547,10 @@ inline string generateParenthesesStr(const Expression *expr, const Operator *par
 shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr);
 
 int exprEval(shared_ptr<ir::Expression> expr);
+
+shared_ptr<ir::BinaryOp> buildBinaryOp(string op, shared_ptr<ir::Expression> l_expr, shared_ptr<ir::Expression> r_expr);
+
+shared_ptr<ir::UnaryOp> buildUnaryOp(string op, shared_ptr<ir::Expression> expr);
 
 } // namespace ir
 
