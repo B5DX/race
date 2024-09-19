@@ -1,10 +1,11 @@
 #include "IR/ExprTree.h"
 #include "llvm/Support/raw_ostream.h"
+#include <iostream>
 
 using namespace ir;
 
 void ExprTreeNode::hoist() {
-    if (!isOperator)
+    if (!isOperatorNode())
         return;
 
     int children_len = children.size();
@@ -89,7 +90,7 @@ void ExprTreeNode::deposit() {
 }
 
 void ExprTreeNode::eraseChild(shared_ptr<ExprTreeNode> child) {
-    if (!isOperator) {
+    if (!isOperatorNode()) {
         throw std::runtime_error("erase child from a none operator node.");
     }
     auto res = std::find(children.begin(), children.end(), child);
@@ -107,7 +108,7 @@ void ExprTreeNode::printTree(int depth) {
         llvm::outs() << "-";
 
     llvm::outs() << this->to_string() << ": [";
-    if (this->isOperator) {
+    if (this->isOperatorNode()) {
         for (auto child : children) {
             llvm::outs() << child->to_string() << ",";
         }

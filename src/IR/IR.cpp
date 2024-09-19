@@ -41,8 +41,8 @@ string AssignOp::to_string() const {
 
 shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *parent_loop) {
     if (auto bin_op = llvm::dyn_cast<clang::BinaryOperator>(expr)) {
-        auto lhs = parseExpression(bin_op->getLHS());
-        auto rhs = parseExpression(bin_op->getRHS());
+        auto lhs = parseExpression(bin_op->getLHS(), parent_loop);
+        auto rhs = parseExpression(bin_op->getRHS(), parent_loop);
         switch (bin_op->getOpcode()) {
         case clang::BinaryOperator::Opcode::BO_Mul:
             return std::make_shared<MulOp>(lhs, rhs);
@@ -58,7 +58,7 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
             throw std::runtime_error("Unsupported binary operator");
         }
     } else if (auto unary_op = llvm::dyn_cast<clang::UnaryOperator>(expr)) {
-        auto sub_expr = parseExpression(unary_op->getSubExpr());
+        auto sub_expr = parseExpression(unary_op->getSubExpr(), parent_loop);
         switch (unary_op->getOpcode()) {
         case clang::UnaryOperator::Opcode::UO_Minus:
             return std::make_shared<NegOp>(sub_expr);
@@ -72,10 +72,10 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
         if (auto decl_ref = llvm::dyn_cast<clang::DeclRefExpr>(callee)) {
             if (decl_ref->getNameInfo().getAsString() == "sin") {
                 auto arg = call_expr->getArg(0);
-                return std::make_shared<SinOp>(parseExpression(arg));
+                return std::make_shared<SinOp>(parseExpression(arg, parent_loop));
             } else if (decl_ref->getNameInfo().getAsString() == "cos") {
                 auto arg = call_expr->getArg(0);
-                return std::make_shared<CosOp>(parseExpression(arg));
+                return std::make_shared<CosOp>(parseExpression(arg, parent_loop));
             }
         }
     } else if (auto integer_literal = llvm::dyn_cast<clang::IntegerLiteral>(expr)) {
@@ -83,10 +83,10 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
     } else if (auto floating_literal = llvm::dyn_cast<clang::FloatingLiteral>(expr)) {
         return std::make_shared<Number>(floating_literal->getValue().convertToDouble());
     } else if (auto implicit_cast = llvm::dyn_cast<clang::ImplicitCastExpr>(expr)) {
-        return parseExpression(implicit_cast->getSubExpr());
+        return parseExpression(implicit_cast->getSubExpr(), parent_loop);
     } else if (auto array_subscript = llvm::dyn_cast<clang::ArraySubscriptExpr>(expr)) {
-        auto base = parseExpression(array_subscript->getBase());
-        auto index = parseExpression(array_subscript->getIdx());
+        auto base = parseExpression(array_subscript->getBase(), parent_loop);
+        auto index = parseExpression(array_subscript->getIdx(), parent_loop);
         vector<shared_ptr<Expression>> indices;
         indices.push_back(index);
         if (auto sub_array = llvm_pointer_cast<ir::ArrayRef>(base)) {
@@ -102,7 +102,7 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
             throw std::runtime_error("Unsupported array expression");
         }
     } else if (auto paren_expr = llvm::dyn_cast<clang::ParenExpr>(expr)) {
-        return parseExpression(paren_expr->getSubExpr());
+        return parseExpression(paren_expr->getSubExpr(), parent_loop);
     }
     expr->dump();
     throw std::runtime_error("Unsupported expression");
@@ -115,7 +115,7 @@ void ForStmt::buildBounds(const clang::ForStmt *for_stmt) {
             if (auto var_decl = llvm::dyn_cast<clang::VarDecl>(decl)) {
                 loop_var = std::make_shared<DeclRef>(var_decl->getNameAsString());
                 auto expr = var_decl->getInit();
-                begin = parseExpression(expr);
+                begin = parseExpression(expr, this);
             }
         }
     } else if (auto assign = llvm::dyn_cast<clang::BinaryOperator>(init)) {
@@ -123,14 +123,14 @@ void ForStmt::buildBounds(const clang::ForStmt *for_stmt) {
             throw std::runtime_error("Invalid for loop initialization");
         }
         auto lhs = assign->getLHS();
-        auto parsed_expr = parseExpression(lhs);
+        auto parsed_expr = parseExpression(lhs, this);
         loop_var = llvm_pointer_cast<DeclRef>(parsed_expr);
         if (!loop_var) {
             throw std::runtime_error("Invalid for loop initialization");
         }
 
         auto rhs = assign->getRHS();
-        begin = parseExpression(rhs);
+        begin = parseExpression(rhs, this);
     }
     assert(loop_var && begin); // Make sure loop_var and begin are initialized.
 
@@ -138,13 +138,13 @@ void ForStmt::buildBounds(const clang::ForStmt *for_stmt) {
     if (auto bin_op = llvm::dyn_cast<clang::BinaryOperator>(cond)) {
         if (bin_op->getOpcode() == clang::BinaryOperator::Opcode::BO_LT) {
             auto lhs = bin_op->getLHS();
-            assert(loop_var->to_string() == parseExpression(lhs)->to_string()); // Make sure the loop variable is on the left side of the comparison operator.
+            assert(loop_var->to_string() == parseExpression(lhs, this)->to_string()); // Make sure the loop variable is on the left side of the comparison operator.
             auto rhs = bin_op->getRHS();
-            end = std::make_shared<SubOp>(parseExpression(rhs), std::make_shared<Number>(1));
+            end = std::make_shared<SubOp>(parseExpression(rhs, this), std::make_shared<Number>(1));
         } else if (bin_op->getOpcode() == clang::BinaryOperator::Opcode::BO_LE) {
             auto lhs = bin_op->getLHS();
             auto rhs = bin_op->getRHS();
-            end = parseExpression(rhs);
+            end = parseExpression(rhs, this);
         } else {
             throw std::runtime_error("Invalid for loop condition. Use comparison operator '<' or '<='.");
         }
@@ -179,13 +179,12 @@ void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
             auto lhs_expr = parseExpression(lhs, this);
             auto rhs_expr = parseExpression(rhs, this);
 
-            this->body.push_back(std::make_shared<ir::Assignment>(
-                std::static_pointer_cast<ir::DeclRef>(lhs_expr), rhs_expr));
+            this->body.push_back(std::make_shared<ir::Assignment>(lhs_expr, rhs_expr));
         }
     }
 }
 
-ForStmt::ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for) : Statement(STMT_FOR) {
+ForStmt::ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for) : Statement(STMT_FOR), parent_for(parent_for), body(this) {
     this->buildBounds(for_stmt);
     index_vars.push_back(loop_var);
     if (parent_for) {
@@ -203,6 +202,26 @@ ForStmt::ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for) : St
         }
     } else {
         processInnerStmt(stmt_body);
+    }
+}
+
+shared_ptr<Expression> ir::buildExpression(std::pair<string, int> idx) {
+    if (idx.second == 0) {
+        return std::make_shared<DeclRef>(idx.first);
+    } else {
+        if (idx.second > 0) {
+            return std::make_shared<AddOp>(std::make_shared<DeclRef>(idx.first), std::make_shared<Number>(idx.second));
+        } else {
+            return std::make_shared<SubOp>(std::make_shared<DeclRef>(idx.first), std::make_shared<Number>(-idx.second));
+        }
+    }
+}
+
+ArrayRef::ArrayRef(const string &array_name, const vector<std::pair<string, int>> &indices, ForStmt *parent_loop)
+    : Expression(EXPR_ARRAY_REF), parent_loop(parent_loop) {
+    this->array = std::make_shared<DeclRef>(array_name);
+    for (const auto &idx : indices) {
+        this->indices.push_back(buildExpression(idx));
     }
 }
 
@@ -228,7 +247,7 @@ vector<Block> ForStmt::getInnermostBlocks() const {
             ret.insert(ret.end(), inner_blocks.begin(), inner_blocks.end());
             ++idx;
         } else if (llvm_isa<Assignment>(stmt)) {
-            Block assign_block;
+            Block assign_block(this);
             do {
                 assign_block.push_back(body[idx]);
                 ++idx;
@@ -244,7 +263,7 @@ vector<Block> ForStmt::getInnermostBlocks() const {
  * @warning Don't support DivOp or UnaryOp yet. Only support one loop var.
  * TODO: support multiple loop vars.
  */
-int exprEval(shared_ptr<ir::Expression> expr) {
+int ir::exprEval(shared_ptr<ir::Expression> expr) {
     if (auto num = llvm_pointer_cast<ir::Number>(expr)) {
         return std::get<0>(num->getValue());
     } else if (auto bop = llvm_pointer_cast<ir::BinaryOp>(expr)) {
@@ -266,9 +285,9 @@ int exprEval(shared_ptr<ir::Expression> expr) {
         } else if (llvm_isa<ir::DeclRef>(bop->getRHS())) {
             switch (op[0]) {
             case '-':
-                return exprEval(bop->getRHS());
+                return exprEval(bop->getLHS());
             case '+':
-                return exprEval(bop->getRHS());
+                return exprEval(bop->getLHS());
             case '*':
                 return 0;
             default:
@@ -296,7 +315,7 @@ int exprEval(shared_ptr<ir::Expression> expr) {
 }
 
 // TODO: Should be merged with exprEval for supporting multiple loop vars.
-shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr) {
+shared_ptr<DeclRef> ir::searchDeclRef(shared_ptr<Expression> expr) {
     if (auto decl_ref = llvm_pointer_cast<DeclRef>(expr)) {
         return decl_ref;
     } else if (auto bop = llvm_pointer_cast<BinaryOp>(expr)) {
@@ -312,7 +331,7 @@ shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr) {
 }
 
 // TODO: Should be merged with exprEval for supporting multiple loop vars.
-std::map<string, int> ArrayRef::getDelta() const {
+std::map<string, int> ArrayRef::getDisp() const {
     std::map<string, int> ret;
     for (const auto &idx : indices) {
         if (auto decl_ref = searchDeclRef(idx)) {

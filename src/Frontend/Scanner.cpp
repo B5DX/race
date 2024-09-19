@@ -17,8 +17,9 @@ struct MatchForStmtCallback : public clang::ast_matchers::MatchFinder::MatchCall
 
   private:
     MyPragmaHandler *avnPragmaHandler;
-    std::shared_ptr<ir::ForStmt> for_stmt;
     unsigned diag_warn_potential_for;
+    std::shared_ptr<ir::ForStmt> for_stmt = nullptr;
+    int avn_cnt = 0;
 };
 
 bool Scanner::BeginSourceFileAction(CompilerInstance &CI) {
@@ -69,8 +70,9 @@ void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
                     assert(assign);
                     expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
                 }
-                extract::extract(expr_trees);
+                extract::extract(expr_trees, this->avn_cnt++);
             }
+            llvm::outs() << this->for_stmt->to_string() << "\n";
         }
     }
 }

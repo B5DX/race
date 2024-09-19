@@ -31,10 +31,9 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     // If A is nolonger used, it will not be deleted since there is a reference from B to A.
     std::weak_ptr<ExprTreeNode> parent;
     shared_ptr<Expression> src;
-    bool isOperator;
 
   public:
-    ExprTreeNode() : src(nullptr), parent(std::weak_ptr<ExprTreeNode>()), isOperator(false) {}
+    ExprTreeNode() : src(nullptr), parent(std::weak_ptr<ExprTreeNode>()) {}
 
     /**
      * @brief Construct a new Expr Tree Node object which points to Expression e.
@@ -44,24 +43,13 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     ExprTreeNode(shared_ptr<ir::Expression> e, shared_ptr<ExprTreeNode> p) {
         src = e;
         parent = p;
-        if (llvm_isa<ir::Operator>(e)) {
-            isOperator = true;
-        } else {
-            isOperator = false;
-        }
     }
 
     void addChild(shared_ptr<ExprTreeNode> child) {
-        if (!isOperator) {
-            throw std::runtime_error("AddOp child to a none operator node.");
-        }
         children.push_back(child);
     }
 
     void addChild(shared_ptr<ir::Expression> e) {
-        if (!isOperator) {
-            throw std::runtime_error("AddOp child to a none operator node.");
-        }
         children.push_back(make_shared<ExprTreeNode>(e, shared_from_this()));
     }
 
@@ -88,14 +76,14 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     const vector<shared_ptr<ExprTreeNode>> &getChildren() { return children; }
 
     shared_ptr<ExprTreeNode> getParent() {
-        if (parent.expired()) {
-            throw std::runtime_error("getParent while parent is deleted.");
+        if (parent.expired()) { // root node will have a expired parent since it's initialized with nullptr.
+            return nullptr;
         } else {
             return parent.lock();
         }
     }
 
-    shared_ptr<ir::Expression> getExpression() { return src; }
+    shared_ptr<ir::Expression> getExpression() const { return src; }
 
     /**
      * @brief Get the Displacement of this ArrayRef node.
@@ -116,7 +104,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
 
     inline bool isLeafNode() { return children.empty(); }
 
-    inline bool isOperatorNode() { return isOperator; }
+    inline bool isOperatorNode() { return !children.empty(); }
 
     inline bool isArrayRef() { return llvm_isa<ir::ArrayRef>(src); }
 
@@ -125,7 +113,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     inline bool isDeclRef() { return llvm_isa<ir::DeclRef>(src); }
 
     virtual string to_string(bool onlyName = true) {
-        if (isOperator) {
+        if (isOperatorNode()) {
             return llvm_pointer_cast<Operator>(src)->getOpStr();
         } else if (auto arr = llvm_pointer_cast<ArrayRef>(src)) {
             if (onlyName) {
@@ -148,7 +136,7 @@ class ExprTree {
   protected:
     using TreeNodeVec = vector<shared_ptr<ExprTreeNode>>;
     shared_ptr<ExprTreeNode> root;     // The root of the AssignOp's rhs' expression tree.
-    shared_ptr<Expression> assign_lhs; // The AssignOp's lhs.
+    shared_ptr<Assignment> assign; // The AssignOp's lhs.
 
     /**
      * @brief Build a tree from Expr e recursively.
@@ -174,6 +162,10 @@ class ExprTree {
         Iterator &operator++() {
             if (node->isLeafNode()) {
                 auto p = node->getParent();
+                if (!p) {
+                    node = nullptr;
+                    return *this;
+                }
                 children_index.top()++;
                 while (children_index.top() == p->getChildren().size()) {
                     children_index.pop();
@@ -212,19 +204,17 @@ class ExprTree {
 
     Iterator end() { return Iterator(nullptr); }
 
-    ExprTree(shared_ptr<ir::Assignment> assign) {
-        assign_lhs = assign->getLHS();
+    ExprTree(shared_ptr<ir::Assignment> assign) : assign(assign) {
         root = make_shared<ExprTreeNode>(assign->getRHS(), nullptr);
         buildTree(root, assign->getRHS());
     }
 
     void hoist() { root->hoist(); }
 
-    virtual void deposit() { root->deposit(); }
+    // Deposit the tree to a binary form and update the AssignOp's rhs to the deposited expression.
+    virtual void deposit() { root->deposit(); assign->setRHS(root->getExpression()); }
 
     shared_ptr<ExprTreeNode> getRoot() { return root; }
-
-    shared_ptr<ir::Expression> getExpression() { return root->getExpression(); }
 
     set<shared_ptr<ExprTreeNode>> getUsedArrayRefs();
 

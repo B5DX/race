@@ -3,8 +3,9 @@
 #include "common.h"
 #include "llvm/Support/Casting.h"
 #include <functional>
-#include <variant>
 #include <map>
+#include <set>
+#include <variant>
 
 namespace clang {
 class Expr;
@@ -22,16 +23,17 @@ enum PRIORITIES {
 };
 
 class Statement {
-  public:
+public:
     enum StmtKind {
+        STMT_BLOCK,
         STMT_FOR,
         STMT_ASSIGN,
     };
 
-  private:
+private:
     const StmtKind kind;
 
-  public:
+public:
     StmtKind get_kind() const { return kind; }
     Statement(StmtKind kind) : kind(kind) {}
 
@@ -40,7 +42,7 @@ class Statement {
 };
 
 class Expression {
-  public:
+public:
     enum ExprKind {
         EXPR_OPERATOR,
         EXPR_UNARY,
@@ -58,21 +60,22 @@ class Expression {
         EXPR_OPERATOR_LAST,
         EXPR_NUMBER,
         EXPR_DECL_REF,
-        EXPR_ARRAY_REF
+        EXPR_ARRAY_REF,
+        EXPR_INTER_VAR,
+        EXPR_ARRAY_REF_LAST,
     };
 
-  private:
+private:
     const ExprKind kind;
 
-  public:
+public:
     ExprKind get_kind() const { return kind; }
     Expression(ExprKind kind) : kind(kind) {}
 
     virtual ~Expression() {}
     virtual string to_string() const = 0;
+    virtual shared_ptr<Expression> clone() const = 0;
 };
-
-using Block = vector<shared_ptr<Statement>>;
 
 template <typename To, typename From>
 inline std::shared_ptr<To> llvm_pointer_cast(const std::shared_ptr<From> &e) {
@@ -89,10 +92,10 @@ inline bool llvm_isa(const std::shared_ptr<From> &e) {
 }
 
 class Operator : public Expression {
-  protected:
+protected:
     const string op;
 
-  public:
+public:
     Operator(ExprKind kind) : Expression(kind) {}
     Operator(ExprKind kind, const string &op) : Expression(kind), op(op) {}
 
@@ -104,19 +107,22 @@ class Operator : public Expression {
     static bool classof(const Expression *expr) {
         return expr->get_kind() >= EXPR_OPERATOR && expr->get_kind() < EXPR_OPERATOR_LAST;
     }
+
+    virtual shared_ptr<Expression> clone() const = 0;
 };
 
 class UnaryOp : public Operator {
-  protected:
+protected:
     shared_ptr<Expression> expr;
 
-  public:
+public:
     UnaryOp(ExprKind kind, const string &op, shared_ptr<Expression> expr)
         : Operator(kind, op), expr(expr) {}
     virtual PRIORITIES get_priority() const override { return PRIORITY_UNARY; }
     virtual string to_string() const override;
 
     virtual shared_ptr<Expression> getOperand() const { return expr; }
+    virtual void setOperand(shared_ptr<Expression> expr) { this->expr = expr; }
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() >= EXPR_UNARY && expr->get_kind() < EXPR_UNARY_LAST;
@@ -124,39 +130,51 @@ class UnaryOp : public Operator {
 };
 
 class NegOp : public UnaryOp {
-  public:
+public:
     NegOp(shared_ptr<Expression> expr) : UnaryOp(EXPR_NEGOP, "-", expr) {}
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_NEGOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<NegOp>(expr->clone());
+    }
 };
 
 class SinOp : public UnaryOp {
-  public:
+public:
     SinOp(shared_ptr<Expression> expr) : UnaryOp(EXPR_SINOP, "sin", expr) {}
     virtual string to_string() const override;
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_SINOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<SinOp>(expr->clone());
+    }
 };
 
 class CosOp : public UnaryOp {
-  public:
+public:
     CosOp(shared_ptr<Expression> expr) : UnaryOp(EXPR_COSOP, "cos", expr) {}
     virtual string to_string() const override;
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_COSOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<CosOp>(expr->clone());
+    }
 };
 
 class BinaryOp : public Operator {
-  protected:
+protected:
     shared_ptr<Expression> lhs, rhs;
 
-  public:
+public:
     BinaryOp(ExprKind kind, const string &op, shared_ptr<Expression> lhs, shared_ptr<Expression> rhs)
         : Operator(kind, op), lhs(lhs), rhs(rhs) {}
 
@@ -173,7 +191,7 @@ class BinaryOp : public Operator {
 };
 
 class AddOp : public BinaryOp {
-  public:
+public:
     AddOp() : BinaryOp(EXPR_ADDOP, "+", nullptr, nullptr) {}
     AddOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_ADDOP, "+", lhs, rhs) {}
 
@@ -182,10 +200,14 @@ class AddOp : public BinaryOp {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_ADDOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<AddOp>(lhs->clone(), rhs->clone());
+    }
 };
 
 class SubOp : public BinaryOp {
-  public:
+public:
     SubOp() : BinaryOp(EXPR_SUBOP, "-", nullptr, nullptr) {}
     SubOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_SUBOP, "-", lhs, rhs) {}
 
@@ -194,10 +216,14 @@ class SubOp : public BinaryOp {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_SUBOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<SubOp>(lhs->clone(), rhs->clone());
+    }
 };
 
 class MulOp : public BinaryOp {
-  public:
+public:
     MulOp() : BinaryOp(EXPR_MULOP, "*", nullptr, nullptr) {}
     MulOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_MULOP, "*", lhs, rhs) {}
 
@@ -206,10 +232,14 @@ class MulOp : public BinaryOp {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_MULOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<MulOp>(lhs->clone(), rhs->clone());
+    }
 };
 
 class DivOp : public BinaryOp {
-  public:
+public:
     DivOp() : BinaryOp(EXPR_DIVOP, "/", nullptr, nullptr) {}
     DivOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_DIVOP, "/", lhs, rhs) {}
 
@@ -218,10 +248,14 @@ class DivOp : public BinaryOp {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_DIVOP;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<DivOp>(lhs->clone(), rhs->clone());
+    }
 };
 
 class AssignOp : public BinaryOp {
-  public:
+public:
     AssignOp() : BinaryOp(EXPR_ASSIGN, "=", nullptr, nullptr) {}
     AssignOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_ASSIGN, "=", lhs, rhs) {}
 
@@ -232,13 +266,17 @@ class AssignOp : public BinaryOp {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_ASSIGN;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<AssignOp>(lhs->clone(), rhs->clone());
+    }
 };
 
 class DeclRef : public Expression {
-  protected:
+protected:
     string name;
 
-  public:
+public:
     DeclRef(const string &name) : Expression(EXPR_DECL_REF), name(name) {}
 
     virtual string to_string() const override { return name; }
@@ -246,15 +284,27 @@ class DeclRef : public Expression {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_DECL_REF;
     }
+
+    bool operator==(const DeclRef &other) const {
+        return name == other.name;
+    }
+
+    bool operator<(const DeclRef &other) const {
+        return name < other.name;
+    }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<DeclRef>(name);
+    }
 };
 
 class Number : public Expression {
     using LL = long long;
 
-  protected:
+protected:
     std::variant<LL, double> value;
 
-  public:
+public:
     Number(LL value) : Expression(EXPR_NUMBER), value(value) {}
     Number(double value) : Expression(EXPR_NUMBER), value(value) {}
 
@@ -275,23 +325,78 @@ class Number : public Expression {
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_NUMBER;
     }
+
+    virtual shared_ptr<Expression> clone() const override {
+        if (std::holds_alternative<LL>(value))
+            return std::make_shared<Number>(std::get<LL>(value));
+        else
+            return std::make_shared<Number>(std::get<double>(value));
+    }
 };
 
 class Assignment : public Statement {
-  protected:
-    shared_ptr<DeclRef> lhs;
+protected:
+    shared_ptr<Expression> lhs;
     shared_ptr<Expression> rhs;
 
-  public:
-    Assignment(shared_ptr<DeclRef> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN), lhs(lhs), rhs(rhs) {}
+public:
+    Assignment(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN), lhs(lhs), rhs(rhs) {}
 
     virtual string to_string() const override { return lhs->to_string() + " = " + rhs->to_string(); }
-    virtual shared_ptr<DeclRef> getLHS() const { return lhs; }
+    virtual shared_ptr<Expression> getLHS() const { return lhs; }
     virtual shared_ptr<Expression> getRHS() const { return rhs; }
-    virtual void setLHS(shared_ptr<DeclRef> lhs) { this->lhs = lhs; }
+    virtual void setLHS(shared_ptr<Expression> lhs) { this->lhs = lhs; }
     virtual void setRHS(shared_ptr<Expression> rhs) { this->rhs = rhs; }
 
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_ASSIGN; }
+};
+
+class ForStmt;
+
+class Block : public Statement {
+protected:
+    vector<shared_ptr<Statement>> body;
+    const ForStmt *parent_for;
+
+public:
+    Block(const ForStmt *parent_for) : Statement(STMT_BLOCK), parent_for(parent_for) {}
+    Block(const Block &block) : Statement(STMT_BLOCK), body(block.body), parent_for(block.parent_for) {}
+    Block(Block &&block) : Statement(STMT_BLOCK), body(std::move(block.body)), parent_for(block.parent_for) {}
+
+    Block &operator=(const Block &block) {
+        body = block.body;
+        parent_for = block.parent_for;
+        return *this;
+    }
+
+    Block &operator=(Block &&block) {
+        body = std::move(block.body);
+        parent_for = block.parent_for;
+        return *this;
+    }
+
+    const ForStmt *getParentFor() const { return parent_for; }
+    const vector<shared_ptr<Statement>> &getBody() const { return body; }
+
+    static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_BLOCK; }
+    virtual string to_string() const override {
+        string ret = "{\n";
+        for (const auto &stmt : body) {
+            ret += "    " + stmt->to_string() + "\n";
+        }
+        ret += "}";
+        return ret;
+    }
+
+    auto begin() { return body.begin(); }
+    auto end() { return body.end(); }
+    auto begin() const { return body.begin(); }
+    auto end() const { return body.end(); }
+    void push_back(shared_ptr<Statement> stmt) { body.push_back(stmt); }
+    size_t size() const { return body.size(); }
+    const shared_ptr<Statement> &operator[](size_t idx) const { return body[idx]; }
+    shared_ptr<Statement> &operator[](size_t idx) { return body[idx]; }
+    bool empty() const { return body.empty(); }
 };
 
 class ForStmt : public Statement {
@@ -299,7 +404,7 @@ class ForStmt : public Statement {
     void buildBounds(const clang::ForStmt *for_stmt);
     void processInnerStmt(const clang::Stmt *stmt);
 
-  protected:
+protected:
     shared_ptr<DeclRef> loop_var;
     shared_ptr<Expression> begin, end; // begin <= loop_var <= end
     Block body;
@@ -308,9 +413,10 @@ class ForStmt : public Statement {
      * e.g. for(j...) {for(i...) {}} -> index_vars = {i, j}.
      */
     vector<shared_ptr<DeclRef>> index_vars;
+    const ForStmt *parent_for;
     unsigned depth;
 
-  public:
+public:
     /**
      * @brief Construct a ForStmt object from a clang::ForStmt object.
      * @warning Parent_for cannot be shared_ptr<ForStmt> because of the constructor uses this.
@@ -326,6 +432,12 @@ class ForStmt : public Statement {
     const vector<shared_ptr<DeclRef>> &getLoopVars() const {
         return index_vars;
     }
+
+    const ForStmt *getParentFor() const { return parent_for; }
+    shared_ptr<DeclRef> getLoopVar() const { return loop_var; }
+    shared_ptr<Expression> getBegin() const { return begin; }
+    shared_ptr<Expression> getEnd() const { return end; }
+    const Block &getBody() const { return body; }
 };
 
 // class ArrayIndex {
@@ -349,7 +461,7 @@ class ForStmt : public Statement {
 // };
 
 class ArrayRef : public Expression {
-  protected:
+protected:
     shared_ptr<DeclRef> array;
     /**
      * @brief The front element is the innermost index. e.g. X[j][i+1] -> indices = {i+1, j}.
@@ -357,35 +469,73 @@ class ArrayRef : public Expression {
     vector<shared_ptr<Expression>> indices;
     ForStmt *parent_loop;
 
-  public:
+public:
     ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices, ForStmt *parent_loop)
         : Expression(EXPR_ARRAY_REF), array(array), indices(indices), parent_loop(parent_loop) {};
+    ArrayRef(const string &array_name, const vector<std::pair<string, int>> &indices, ForStmt *parent_loop);
 
     const vector<shared_ptr<Expression>> &getIndices() const { return indices; }
 
     shared_ptr<DeclRef> getArrayName() const { return array; }
 
-    std::map<string, int> getDelta() const;
+    std::map<string, int> getDisp() const;
 
     ForStmt *getParentLoop() const { return parent_loop; }
 
-    vector<shared_ptr<DeclRef>> getLoopVars() {
-        if (!parent_loop) return vector<shared_ptr<DeclRef>>();
+    vector<shared_ptr<DeclRef>> getLoopVars() const {
+        if (!parent_loop)
+            return vector<shared_ptr<DeclRef>>();
         return parent_loop->getLoopVars();
     }
 
     static bool classof(const Expression *expr) {
-        return expr->get_kind() == EXPR_ARRAY_REF;
+        return expr->get_kind() >= EXPR_ARRAY_REF && expr->get_kind() < EXPR_ARRAY_REF_LAST;
     }
     virtual string to_string() const override;
+
+    bool operator==(const ArrayRef &other) const {
+        return array->to_string() == other.array->to_string();
+    }
+
+    bool operator<(const ArrayRef &other) const {
+        return array->to_string() < other.array->to_string();
+    }
+
+    virtual shared_ptr<Expression> clone() const override{
+        vector<shared_ptr<Expression>> new_indices;
+        for (const auto &idx : indices) {
+            new_indices.push_back(idx->clone());
+        }
+        return std::make_shared<ArrayRef>(array, new_indices, parent_loop);
+    }
 };
+
+// class InterVar : public ir::ArrayRef {
+// private:
+//     shared_ptr<ir::Expression> expr;
+//     std::map<string, int> upper_bounds;
+//     std::map<string, int> lower_bounds;
+
+// public:
+//     InterVar(shared_ptr<ir::DeclRef> array, const vector<shared_ptr<ir::Expression>> &indices, ir::ForStmt *parent_loop,
+//              shared_ptr<ir::Expression> expr, const std::map<string, int> &upper_bounds, const std::map<string, int> &lower_bounds)
+//         : ir::ArrayRef(array, indices, parent_loop), expr(expr), upper_bounds(upper_bounds), lower_bounds(lower_bounds) {}
+
+//     shared_ptr<ir::Expression> getExpr() const { return expr; }
+
+//     static bool classof(const ir::Expression *expr) {
+//         return expr->get_kind() == EXPR_INTER_VAR;
+//     }
+// };
 
 /**
  * @brief Recursively parse an expression from clang::Expr to ir::Expression. If failed, throw an exception.
  * @param expr The clang::Expr to be parsed.
  * @param parent_loop The parent loop of the expression. Default to nullptr. Only used for ArrayRef.
  */
-shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_loop=nullptr);
+shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_loop);
+
+shared_ptr<Expression> buildExpression(std::pair<string, int> idx);
 
 /**
  * @brief Generate a string representation of the expression with parentheses.
@@ -393,7 +543,10 @@ shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_
  */
 inline string generateParenthesesStr(const Expression *expr, const Operator *parent_op,
                                      std::function<bool(int, int)> less_priority = std::less_equal<int>());
-// inline string generateParenthesesStr(const Expression *expr, const Operator *parent_op);
+
+shared_ptr<DeclRef> searchDeclRef(shared_ptr<Expression> expr);
+
+int exprEval(shared_ptr<ir::Expression> expr);
 
 } // namespace ir
 

@@ -8,10 +8,10 @@ DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeN
 #endif
     std::map<string, int> left_indices, right_indices;
     if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(arr_left->getExpression())) {
-        left_indices = arr_ref->getDelta();
+        left_indices = arr_ref->getDisp();
     }
     if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(arr_right->getExpression())) {
-        right_indices = arr_ref->getDelta();
+        right_indices = arr_ref->getDisp();
     }
 
     if (commutable) { // Make sure the left array is "smaller" than the right array.
