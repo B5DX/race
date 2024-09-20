@@ -37,7 +37,7 @@ double field[jtf + 10][ktf + 10][itf + 10];
 double tendency[jtf + 10][ktf + 10][itf + 10];
 double tmp[jtf + 10][ktf + 10][itf + 10];
 
-int ***A, B[10], C[10], D[10];
+int ***A, B[10][10], C[10], D[10];
 
 int main() {
     int i, j, k, x, y, z;
@@ -70,8 +70,10 @@ int main() {
         for (j = j_start; j <= jtf; j++) {
             for (k = k_start; k <= ktf; k++) {
                 for (i = i_start; i <= itf; i++) {
-                    mkrdxm = (test2*test1*C[i] + B[i+1] + test2*test1*C[i+2] + B[i+3]);
-                    mkrdxm = msfux[j][i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]) * msfuy[j][1+i];
+                    mkrdxm = (test2*test1*C[i] + B[i+1][j-1] + test2*test1*C[i+2] + B[i+3][j-1]);
+                    mkrdxm = (test2*test1*C[i-1] + B[i][j-1] + test2*test1*C[i+1] + B[i+2][j-1]);
+                    mkrdxm = (test2*test1*C[i] + B[i+2][j] + test2*test1*C[i+3] + B[i+4][j]);
+                    // mkrdxm = msfux[j][i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]) * msfuy[j][1+i];
 
                     // mkrdxm=((((((msfux[j][i]/msfuy[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j][k][i-1]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j][i-1])+c2[k])))*rdx);
                     // mkrdxp=((((((msfux[j][i+1]/msfuy[j][i+1])*0.500000)*(xkmhd[j][k][i+1]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j][i+1])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdx);

@@ -184,7 +184,7 @@ void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
     }
 }
 
-ForStmt::ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for) : Statement(STMT_FOR), parent_for(parent_for), body(this) {
+ForStmt::ForStmt(const clang::ForStmt *for_stmt, ForStmt *parent_for) : Statement(STMT_FOR), parent_for(parent_for), body(this) {
     this->buildBounds(for_stmt);
     index_vars.push_back(loop_var);
     if (parent_for) {
@@ -205,23 +205,34 @@ ForStmt::ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for) : St
     }
 }
 
-shared_ptr<Expression> ir::buildExpression(std::pair<string, int> idx) {
-    if (idx.second == 0) {
-        return std::make_shared<DeclRef>(idx.first);
+// shared_ptr<Expression> ir::buildExpression(std::pair<string, int> idx) {
+//     if (idx.second == 0) {
+//         return std::make_shared<DeclRef>(idx.first);
+//     } else {
+//         if (idx.second > 0) {
+//             return std::make_shared<AddOp>(std::make_shared<DeclRef>(idx.first), std::make_shared<Number>(idx.second));
+//         } else {
+//             return std::make_shared<SubOp>(std::make_shared<DeclRef>(idx.first), std::make_shared<Number>(-idx.second));
+//         }
+//     }
+// }
+
+shared_ptr<ir::Expression> ir::buildExpression(shared_ptr<ir::Expression> base_expr, int shift) {
+    if (shift == 0) {
+        return base_expr;
+    } else if (shift > 0) {
+        return std::make_shared<ir::AddOp>(base_expr, std::make_shared<ir::Number>(shift));
     } else {
-        if (idx.second > 0) {
-            return std::make_shared<AddOp>(std::make_shared<DeclRef>(idx.first), std::make_shared<Number>(idx.second));
-        } else {
-            return std::make_shared<SubOp>(std::make_shared<DeclRef>(idx.first), std::make_shared<Number>(-idx.second));
-        }
+        return std::make_shared<ir::SubOp>(base_expr, std::make_shared<ir::Number>(-shift));
     }
+
 }
 
 ArrayRef::ArrayRef(const string &array_name, const vector<std::pair<string, int>> &indices, ForStmt *parent_loop)
     : Expression(EXPR_ARRAY_REF), parent_loop(parent_loop) {
     this->array = std::make_shared<DeclRef>(array_name);
     for (const auto &idx : indices) {
-        this->indices.push_back(buildExpression(idx));
+        this->indices.push_back(buildExpression(std::make_shared<DeclRef>(idx.first), idx.second));
     }
 }
 
@@ -238,7 +249,7 @@ string ForStmt::to_string() const {
     return ret;
 }
 
-vector<Block> ForStmt::getInnermostBlocks() const {
+vector<Block> ForStmt::getInnermostBlocks() {
     vector<Block> ret;
     for (size_t idx = 0; idx < body.size();) {
         const auto &stmt = body[idx];
@@ -328,6 +339,16 @@ shared_ptr<DeclRef> ir::searchDeclRef(shared_ptr<Expression> expr) {
     } else {
         return nullptr;
     }
+}
+
+vector<std::pair<string, int>> ArrayRef::getOrderedDisp() const {
+    vector<std::pair<string, int>> ret;
+    for (const auto &idx : indices) {
+        if (auto decl_ref = searchDeclRef(idx)) {
+            ret.push_back({decl_ref->to_string(), exprEval(idx)});
+        }
+    }
+    return ret;
 }
 
 // TODO: Should be merged with exprEval for supporting multiple loop vars.

@@ -36,7 +36,7 @@ bool Scanner::BeginSourceFileAction(CompilerInstance &CI) {
     return true;
 }
 
-const clang::ForStmt *outter_for_stmt = nullptr;
+const clang::ForStmt *outer_for_stmt = nullptr;
 
 void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
     const auto &Nodes = Result.Nodes;
@@ -45,20 +45,22 @@ void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
     const auto *for_stmt = Nodes.getNodeAs<clang::ForStmt>("for_stmt");
     if (for_stmt) {
         if (avnPragmaHandler->ifBelongsToPragma(for_stmt->getBeginLoc())) {
-            if (!outter_for_stmt) {
-                outter_for_stmt = for_stmt;
+            if (!outer_for_stmt) {
+                outer_for_stmt = for_stmt;
             } else {
                 // Escape the inner for statement.
-                if (for_stmt->getBeginLoc() > outter_for_stmt->getBeginLoc() ||
-                    for_stmt->getEndLoc() < outter_for_stmt->getEndLoc()) {
+                if (for_stmt->getBeginLoc() > outer_for_stmt->getBeginLoc() ||
+                    for_stmt->getEndLoc() < outer_for_stmt->getEndLoc()) {
                     return; 
                 } else {
-                    outter_for_stmt = for_stmt;
+                    outer_for_stmt = for_stmt;
                 }
             }
             Diag.Report(for_stmt->getBeginLoc(), diag_warn_potential_for);
-            // for_stmt->dump();
+
+            shared_ptr<ir::Block> outer_block = std::make_shared<ir::Block>(nullptr);
             this->for_stmt = std::make_shared<ir::ForStmt>(for_stmt);
+            outer_block->push_back(this->for_stmt);
             llvm::outs() << this->for_stmt->to_string() << "\n";
             llvm::outs() << "----------------------\n";
             vector<ir::Block> blocks = this->for_stmt->getInnermostBlocks();
@@ -70,9 +72,9 @@ void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
                     assert(assign);
                     expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
                 }
-                extract::extract(expr_trees, this->avn_cnt++);
+                extract::extract(outer_block, expr_trees, this->avn_cnt++);
             }
-            llvm::outs() << this->for_stmt->to_string() << "\n";
+            llvm::outs() << outer_block->to_string() << "\n";
         }
     }
 }

@@ -356,10 +356,10 @@ class ForStmt;
 class Block : public Statement {
 protected:
     vector<shared_ptr<Statement>> body;
-    const ForStmt *parent_for;
+    ForStmt *parent_for;
 
 public:
-    Block(const ForStmt *parent_for) : Statement(STMT_BLOCK), parent_for(parent_for) {}
+    Block(ForStmt *parent_for) : Statement(STMT_BLOCK), parent_for(parent_for) {}
     Block(const Block &block) : Statement(STMT_BLOCK), body(block.body), parent_for(block.parent_for) {}
     Block(Block &&block) : Statement(STMT_BLOCK), body(std::move(block.body)), parent_for(block.parent_for) {}
 
@@ -375,16 +375,19 @@ public:
         return *this;
     }
 
-    const ForStmt *getParentFor() const { return parent_for; }
+    ForStmt *getParentFor() { return parent_for; }
     const vector<shared_ptr<Statement>> &getBody() const { return body; }
+    vector<shared_ptr<Statement>> &getBody() { return body; }
 
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_BLOCK; }
     virtual string to_string() const override {
-        string ret = "{\n";
-        for (const auto &stmt : body) {
-            ret += "    " + stmt->to_string() + "\n";
+        string ret;
+        if (body.empty())
+            return ret;
+        ret = body[0]->to_string();
+        for (size_t i = 1; i < body.size(); i++) {
+            ret += "\n" + body[i]->to_string();
         }
-        ret += "}";
         return ret;
     }
 
@@ -413,7 +416,7 @@ protected:
      * e.g. for(j...) {for(i...) {}} -> index_vars = {i, j}.
      */
     vector<shared_ptr<DeclRef>> index_vars;
-    const ForStmt *parent_for;
+    ForStmt *parent_for;
     unsigned depth;
 
 public:
@@ -422,22 +425,41 @@ public:
      * @warning Parent_for cannot be shared_ptr<ForStmt> because of the constructor uses this.
      * And shared_from_this() can only be called after the object is constructed.
      */
-    ForStmt(const clang::ForStmt *for_stmt, const ForStmt *parent_for = nullptr);
+    ForStmt(const clang::ForStmt *for_stmt, ForStmt *parent_for = nullptr);
+    ForStmt(string loop_var, shared_ptr<Expression> begin, shared_ptr<Expression> end, ForStmt *parent_for)
+        : Statement(STMT_FOR), begin(begin), end(end), body(this), parent_for(const_cast<ForStmt *>(parent_for)), depth(parent_for ? parent_for->depth + 1 : 0) {
+        this->loop_var = std::make_shared<DeclRef>(loop_var);
+        index_vars.push_back(this->loop_var);
+        if (parent_for) {
+            const auto &parent_index_vars = parent_for->index_vars;
+            index_vars.insert(index_vars.end(), parent_index_vars.begin(), parent_index_vars.end());
+        }
+    }
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_FOR; }
     virtual string to_string() const override;
 
     // TODO: Block may be defined as a class named AssignBlock inherited from Statement, which can contain the loop_vars information for ArrayRef's index.
-    vector<Block> getInnermostBlocks() const;
+    vector<Block> getInnermostBlocks();
 
     const vector<shared_ptr<DeclRef>> &getLoopVars() const {
         return index_vars;
     }
 
-    const ForStmt *getParentFor() const { return parent_for; }
+    void setParentFor(ForStmt *parent_for) { 
+        this->index_vars = {this->loop_var};
+        if (parent_for) {
+            const auto &parent_index_vars = parent_for->index_vars;
+            index_vars.insert(index_vars.end(), parent_index_vars.begin(), parent_index_vars.end());
+            this->depth = parent_for->depth + 1;
+        }
+        this->parent_for = parent_for; 
+    }
+    ForStmt *getParentFor() { return parent_for; }
     shared_ptr<DeclRef> getLoopVar() const { return loop_var; }
     shared_ptr<Expression> getBegin() const { return begin; }
     shared_ptr<Expression> getEnd() const { return end; }
     const Block &getBody() const { return body; }
+    Block &getBody() { return body; }
 };
 
 // class ArrayIndex {
@@ -478,7 +500,11 @@ public:
 
     shared_ptr<DeclRef> getArrayName() const { return array; }
 
+    vector<std::pair<string, int>> getOrderedDisp() const;
+    
     std::map<string, int> getDisp() const;
+
+    void setParentLoop(ForStmt *parent_loop) { this->parent_loop = parent_loop; }
 
     ForStmt *getParentLoop() const { return parent_loop; }
 
@@ -535,7 +561,8 @@ public:
  */
 shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_loop);
 
-shared_ptr<Expression> buildExpression(std::pair<string, int> idx);
+// shared_ptr<Expression> buildExpression(std::pair<string, int> idx);
+shared_ptr<ir::Expression> buildExpression(shared_ptr<ir::Expression> base_expr, int shift);
 
 /**
  * @brief Generate a string representation of the expression with parentheses.
@@ -551,6 +578,18 @@ int exprEval(shared_ptr<ir::Expression> expr);
 shared_ptr<ir::BinaryOp> buildBinaryOp(string op, shared_ptr<ir::Expression> l_expr, shared_ptr<ir::Expression> r_expr);
 
 shared_ptr<ir::UnaryOp> buildUnaryOp(string op, shared_ptr<ir::Expression> expr);
+
+template <typename T>
+void for_each_expr(shared_ptr<ir::Expression> expr, std::function<void(shared_ptr<T>)> func) {
+    if (auto ptr = llvm_pointer_cast<T>(expr)) {
+        func(ptr);
+    } else if (auto bop = llvm_pointer_cast<ir::BinaryOp>(expr)) {
+        for_each_expr<T>(bop->getLHS(), func);
+        for_each_expr<T>(bop->getRHS(), func);
+    } else if (auto uop = llvm_pointer_cast<ir::UnaryOp>(expr)) {
+        for_each_expr<T>(uop->getOperand(), func);
+    }
+}
 
 } // namespace ir
 

@@ -18,8 +18,8 @@ using std::weak_ptr;
 /**
  * @brief A m-ary tree node class for intermediate variable extraction.
  * @details
- * {shared_ptr<ir::Expression> src} is a pointer to the PAST Expression it represents.
- * This class is to transform the original PAST Expression(which is a binary tree) to a m-ary tree.
+ * {shared_ptr<ir::Expression> src} is a pointer to the AVN Expression it represents.
+ * This class is to transform the original AVN Expression(which is a binary tree) to a m-ary tree.
  */
 class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
   protected:
@@ -35,8 +35,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
 
     /**
      * @brief Construct a new Expr Tree Node object which points to Expression e.
-     * @note
-     * * Its parent is set to p, but p's children is not changed. So you should add this node to p's children manually under normal conditions.
+     * @warning Its parent is set to p, but p's children is not changed. So you should add this node to p's children manually under normal conditions.
      */
     ExprTreeNode(shared_ptr<ir::Expression> e, shared_ptr<ExprTreeNode> p) {
         src = e;
@@ -59,7 +58,6 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
      * @brief Hoist this operator node's children whose operator equals itself.
      * @details
      * This method transforms the tree from the original binary tree to a m-ary tree.
-     * TODO: MinusOp and DivOp May be wrong.
      */
     void hoist();
 
@@ -82,13 +80,6 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     }
 
     shared_ptr<ir::Expression> getExpression() const { return src; }
-
-    /**
-     * @brief Get the Displacement of this ArrayRef node.
-     *
-     * @return vector<pair<int, int>>: A vector of pairs of (dim, displacement). eg. [(2, 0), (1, 1), (0, 2)] means the ArrayRef is A[0][1][2].
-     */
-    vector<pair<int, int>> getDisplacement();
 
     shared_ptr<DeclRef> getArrayName() {
         if (auto arf = llvm_pointer_cast<ArrayRef>(src)) {
@@ -128,13 +119,13 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
 };
 
 /**
- * @brief A tree class which contains its root ExprTreeNode and its lhs Expression(DeclRef or ArrayRef).
+ * @brief A tree class which contains its root ExprTreeNode and the AssignOp.
  */
 class ExprTree {
   protected:
     using TreeNodeVec = vector<shared_ptr<ExprTreeNode>>;
-    shared_ptr<ExprTreeNode> root;     // The root of the AssignOp's rhs' expression tree.
-    shared_ptr<Assignment> assign; // The AssignOp's lhs.
+    shared_ptr<ExprTreeNode> root; // The root of the AssignOp's rhs' expression tree.
+    shared_ptr<Assignment> assign; // The AssignOp which is "lhs = root"
 
     /**
      * @brief Build a tree from Expr e recursively.
@@ -228,8 +219,6 @@ class ExprTree {
     // }
 
     void replaceArf2Scalar(shared_ptr<ArrayRef> arf, shared_ptr<DeclRef> scalar);
-
-    // void replaceLoopVar(int target_dim, string new_var);
 
     void printTree() { root->printTree(0); }
 
