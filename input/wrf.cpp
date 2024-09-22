@@ -71,7 +71,7 @@ int main() {
             for (k = k_start; k <= ktf; k++) {
                 for (i = i_start; i <= itf; i++) {
                     // mkrdxm = (test2*test1 + test2*test1);
-                    // mkrdxm = (test2*test1 + test2*test1 + B[i+3][j-1]);
+                    // mkrdxm = (C[i]*D[i] * C[i+1]*D[i+1]);
                     // mkrdxm = (test2*test1*C[i-1] + B[i][j-1] + test2*test1*C[i+1] + B[i+2][j-1]);
                     // mkrdxm = (test2*test1*C[i] + B[i+2][j] + test2*test1*C[i+3] + B[i+4][j]);
                     // mkrdxm = msfux[j][i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]) * msfuy[j][1+i];
@@ -81,8 +81,8 @@ int main() {
                     // // mrdx=((msftx[j][i]*msfty[j][i])*rdx);
                     mkrdym=((((((msfvy[j][i]*msfvx_inv[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j-1][k][i]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j-1][i])+c2[k])))*rdy);
                     mkrdyp=((((((msfvy[j+1][i]*msfvx_inv[j+1][i])*0.500000)*(xkmhd[j+1][k][i]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j+1][i])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdy);
-                    // // mrdy=((msftx[j][i]*msfty[j][i])*rdy);
-                    // tendency[j][k][i]=(tendency[j][k][i]+((mrdx*((mkrdxp*(field[j][k][i+1]-field[j][k][i]))-(mkrdxm*(field[j][k][i]-field[j][k][i-1]))))+(mrdy*((mkrdyp*(field[j+1][k][i]-field[j][k][i]))-(mkrdym*(field[j][k][i]-field[j-1][k][i]))))));
+                    // mrdy=((msftx[j][i]*msfty[j][i])*rdy);
+                    tendency[j][k][i]=(tendency[j][k][i]+((mrdx*((mkrdxp*(field[j][k][i+1]-field[j][k][i]))-(mkrdxm*(field[j][k][i]-field[j][k][i-1]))))+(mrdy*((mkrdyp*(field[j+1][k][i]-field[j][k][i]))-(mkrdym*(field[j][k][i]-field[j-1][k][i]))))));
                 }
             }
         }

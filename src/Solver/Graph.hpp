@@ -7,6 +7,7 @@
 #include <iostream>
 #include <list>
 #include <map>
+#include <queue>
 
 // template <typename T>
 // struct PointerLess {
@@ -28,6 +29,9 @@ class UDGraph {
     UDGraph() {}
 
     inline void addNode(Node node) {
+        if (hasNode(node)) {
+            return;
+        }
         nodes.push_back(node);
         adj_list.push_back(vector<size_t>());
         node_to_index[node] = nodes.size() - 1;
@@ -117,6 +121,65 @@ class UDGraph {
 
     inline bool hasNode(Node node) const {
         return node_to_index.find(node) != node_to_index.end();
+    }
+
+    UDGraph<Node> getSubGraph(const vector<Node> &nodes) const {
+        UDGraph<Node> sub_graph;
+        for (const auto &node : nodes) {
+            sub_graph.addNode(node);
+        }
+        for (size_t i = 0; i < nodes.size(); i++) {
+            for (size_t j = i + 1; j < nodes.size(); j++) {
+                if (adjacent(nodes[i], nodes[j])) {
+                    sub_graph.addEdge(nodes[i], nodes[j]);
+                }
+            }
+        }
+        return sub_graph;
+    }
+
+    vector<UDGraph<Node>> connectedComponents() const {
+        vector<UDGraph<Node>> components;
+        vector<bool> visited(nodes.size(), false);
+        std::queue<size_t> q;
+        vector<Node> component_nodes;
+        for (size_t i = 0; i < nodes.size(); i++) {
+            if (visited[i]) {
+                continue;
+            }
+            component_nodes.clear();
+            q.push(i);
+            while (!q.empty()) {
+                size_t cur = q.front();
+                q.pop();
+                if (visited[cur]) {
+                    continue;
+                }
+                visited[cur] = true;
+                component_nodes.push_back(nodes[cur]);
+                for (size_t neighbor : adj_list[cur]) {
+                    if (!visited[neighbor]) {
+                        q.push(neighbor);
+                    }
+                }
+            }
+            components.push_back(getSubGraph(component_nodes));
+        }
+        return components;
+    }
+
+    void concatGraph(const UDGraph<Node> &other) {
+        auto others_nodes = other.getNodes();
+        for (const auto &node : others_nodes) {
+            addNode(node);
+        }
+        for (size_t i = 0; i < others_nodes.size(); i++) {
+            for (size_t j = i + 1; j < others_nodes.size(); j++) {
+                if (other.adjacent(others_nodes[i], others_nodes[j])) {
+                    addEdge(others_nodes[i], others_nodes[j]);
+                }
+            }
+        }
     }
 
     void printGraph() const {

@@ -118,10 +118,10 @@ void insertAssignment(shared_ptr<ir::Block> outer_block, IVInfoManager &info_man
     vector<string> loop_vars;
     std::transform(ordered_disp.begin(), ordered_disp.end(), std::back_inserter(loop_vars), [](const auto &p) { return p.first; });
     auto new_for = buildForStmt(loop_vars.rbegin(), loop_vars.rend(),
-                                info_manager, compressed_arr_ref->getArrayName()->to_string(), loop_var2for, assign, parent_for);       
+                                info_manager, compressed_arr_ref->getArrayName()->to_string(), loop_var2for, assign, parent_for);
     if (!parent_for) { // Insert before outmost loop.
         auto &body = outer_block->getBody();
-        body.insert(body.begin(), new_for);        
+        body.insert(body.begin(), new_for);
     } else {
         auto &body = parent_for->getBody().getBody();
         body.insert(body.begin(), new_for);
@@ -160,7 +160,7 @@ void postProcess(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager,
             auto &body = outer_block->getBody();
             auto assign = std::make_shared<ir::Assignment>(std::make_shared<ir::DeclRef>(iv_array), info_manager.getConstructRHS(iv_array));
             body.insert(body.begin(), assign);
-        } 
+        }
         // Case 2: The array here must be ArrayRef.
         else {
             // Compress dimension.
@@ -233,7 +233,6 @@ void postProcess(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager,
             auto assign = std::make_shared<ir::Assignment>(construct_lhs, construct_rhs);
             insertAssignment(outer_block, info_manager, assign);
         }
-        
     }
 }
 
@@ -284,6 +283,7 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
             }
         }
 #endif
+        // Build delta-graph.
         UDGraph<shared_ptr<DeltaNode>> delta_graph;
         bool commutable = true;
         // Begin to construct the delta-graph.
@@ -320,22 +320,53 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
         delta_graph.printGraph();
 #endif
         // Solve the delta-graph.
+        vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();
+        vector<std::set<size_t>> connected_component_hash_set(connected_components.size());
+        vector<bool> solved(connected_components.size(), false);
+        vector<shared_ptr<DeltaNode>> result;
         Solver solver;
-        std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
-        for (const auto &node : delta_graph.getNodes()) {
-            hash_node_map[node->getHash()].push_back(node);
-        }
-        vector<shared_ptr<DeltaNode>> filtered_nodes;
-        for (const auto &iter : hash_node_map) {
-            if (iter.second.size() > 1) {
-                filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
+        for (size_t i = 0; i < connected_components.size(); i++) {
+            std::set<size_t> hash_numbers;
+            for (const auto &node : connected_components[i].getNodes()) {
+                hash_numbers.insert(node->getHash());
             }
+            connected_component_hash_set[i] = hash_numbers;
         }
-        std::cout << filtered_nodes.size() << " nodes in total.\n";
-#ifdef DEBUG
-#endif
+        for (size_t i = 0; i < connected_components.size(); i++) {
+            if (solved[i]) {
+                continue;
+            }
+            solved[i] = true;
+            auto &component = connected_components[i];
+            auto &hash_set = connected_component_hash_set[i];
+            for (size_t j = i + 1; j < connected_components.size(); j++) {
+                std::set<size_t> hash_set_intersection;
+                std::set_intersection(hash_set.begin(), hash_set.end(),
+                                      connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
+                                      std::inserter(hash_set_intersection, hash_set_intersection.begin()));
+                if (hash_set_intersection.size() > 0) {
+                    std::set_union(hash_set.begin(), hash_set.end(),
+                                connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
+                                std::inserter(hash_set, hash_set.begin()));
+                    solved[j] = true;
+                    component.concatGraph(connected_components[j]);
+                }
+            }
 
-        const auto &result = solver.solve(delta_graph, filtered_nodes);
+            std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
+            for (const auto &node : component.getNodes()) {
+                hash_node_map[node->getHash()].push_back(node);
+            }
+            vector<shared_ptr<DeltaNode>> filtered_nodes;
+            for (const auto &iter : hash_node_map) {
+                if (iter.second.size() > 1) {
+                    filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
+                }
+            }
+            // std::cout << filtered_nodes.size() << " nodes in total.\n";
+            auto tmp_res = solver.solve(component, filtered_nodes);
+            result.insert(result.end(), tmp_res.begin(), tmp_res.end());
+        }
 
         if (result.empty())
             break;
