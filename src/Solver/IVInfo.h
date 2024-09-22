@@ -11,8 +11,8 @@
  * 3. disp: the displacement of each operand. If the operand is a DeclRef or Number, disp is empty.
  * 4. index_vars: the index_vars of the array. Used in generating expression.
  * 5. referenced_cnt: the count of references of the array .
- * 6. lower_bounds: the lower bounds of each dimension.
- * 7. upper_bounds: the upper bounds of each dimension.
+ * 6. lower_bounds: the lower bounds of each dimension that the array can access.
+ * 7. upper_bounds: the upper bounds of each dimension that the array can access.
  * 
  * For example, T[j][i] = A[i+1] + B[j][i-1], T is an intermediate array, A and B are native arrays. Then IVInfoManager will map T to an IVInfo object.
  * The object will be:
@@ -20,6 +20,9 @@
  * operands: {"A", "B"}
  * disp: {{("i", 1)}, {("i", -1), ("j", 0)}}
  * index_vars: {"i", "j"}
+ * 
+ * @warning lower_bounds and upper_bounds are not in use now. It may be enrolled in the future.
+ * Explanation: 
  */
 struct IVInfo {
     // shared_ptr<ir::Expression> iv_expr = nullptr;

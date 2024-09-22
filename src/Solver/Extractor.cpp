@@ -81,8 +81,8 @@ shared_ptr<ir::ForStmt> buildForStmt(vector<string>::reverse_iterator outer_loop
         return nullptr;
 
     auto info = info_manager.getIVInfo(array);
-    auto lb = info.lower_bounds[*outer_loop_var];
-    auto ub = info.upper_bounds[*outer_loop_var];
+    auto lb = info.used_min_delta[*outer_loop_var];
+    auto ub = info.used_max_delta[*outer_loop_var];
     auto lb_expr = ir::buildExpression(loop_var2for.at(*outer_loop_var)->getBegin(), lb);
     auto ub_expr = ir::buildExpression(loop_var2for.at(*outer_loop_var)->getEnd(), ub);
     shared_ptr<ir::ForStmt> cur_loop = std::make_shared<ir::ForStmt>(*outer_loop_var, lb_expr, ub_expr, parent_for);
@@ -98,7 +98,7 @@ shared_ptr<ir::ForStmt> buildForStmt(vector<string>::reverse_iterator outer_loop
     return cur_loop;
 }
 
-void insertAssignment(IVInfoManager &info_manager, shared_ptr<Assignment> assign) {
+void insertAssignment(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager, shared_ptr<Assignment> assign) {
     auto compressed_arr_ref = llvm_pointer_cast<ArrayRef>(assign->getLHS());
     ForStmt *parent_for = info_manager.getParentFor();
     auto ordered_disp = compressed_arr_ref->getOrderedDisp();
@@ -108,21 +108,22 @@ void insertAssignment(IVInfoManager &info_manager, shared_ptr<Assignment> assign
         auto var = parent_for->getLoopVar()->to_string();
         if (var == outmost_idx_var) {
             loop_var2for[var] = parent_for;
+            parent_for = parent_for->getParentFor();
             break;
         }
         parent_for = parent_for->getParentFor();
         loop_var2for[var] = parent_for;
     }
 
+    vector<string> loop_vars;
+    std::transform(ordered_disp.begin(), ordered_disp.end(), std::back_inserter(loop_vars), [](const auto &p) { return p.first; });
+    auto new_for = buildForStmt(loop_vars.rbegin(), loop_vars.rend(),
+                                info_manager, compressed_arr_ref->getArrayName()->to_string(), loop_var2for, assign, parent_for);       
     if (!parent_for) { // Insert before outmost loop.
-        std::cout << "Insertion before outmost loop hasn't implemented." << std::endl;
+        auto &body = outer_block->getBody();
+        body.insert(body.begin(), new_for);        
     } else {
-        parent_for = parent_for->getParentFor();
         auto &body = parent_for->getBody().getBody();
-        vector<string> loop_vars;
-        std::transform(ordered_disp.begin(), ordered_disp.end(), std::back_inserter(loop_vars), [](const auto &p) { return p.first; });
-        auto new_for = buildForStmt(loop_vars.rbegin(), loop_vars.rend(),
-                                    info_manager, compressed_arr_ref->getArrayName()->to_string(), loop_var2for, assign, parent_for);
         body.insert(body.begin(), new_for);
     }
 }
@@ -130,9 +131,6 @@ void insertAssignment(IVInfoManager &info_manager, shared_ptr<Assignment> assign
 // Compress the dimension of the array. Generate array construct ForStmt.
 void postProcess(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager, Forest extracted_expr_tree) {
     ForStmt *parent_for = info_manager.getParentFor();
-    if (!parent_for) {
-        return;
-    }
     std::set<string> iv_arrays = info_manager.getIVArray();
     std::map<string, vector<shared_ptr<ExprTreeNode>>> used_iv;
     for (auto tree : extracted_expr_tree) {
@@ -148,82 +146,94 @@ void postProcess(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager,
     // Process each array in topological order.
     for (auto iv_iter = topological_order.rbegin(); iv_iter != topological_order.rend(); ++iv_iter) {
         const auto &iv_array = *iv_iter;
+#ifdef DEBUG
+        std::cout << "------- PostProcess: " << iv_array << "-------" << std::endl;
+#endif
         if (used_iv.find(iv_array) == used_iv.end()) {
             continue;
         }
-        if (!info_manager.isArrayRef(iv_array)) { // No need to process DeclRef and Number.
-            continue;
-        }
-        // Compress dimension.
-        auto for_loop_vars = parent_for->getLoopVars();
-        auto max_delta = info_manager.getUsedMaxDelta(iv_array);
-        auto min_delta = info_manager.getUsedMinDelta(iv_array);
-        string outmost_idx_var; // The outmost loop variable that iv_array refers to different index. e.g. {T[j][i+1],T[j][i]}'s outmost_idx_var is i, since both refer to j.
-        size_t outmost_idx_var_pos = for_loop_vars.size();
-        for (auto iter = for_loop_vars.rbegin(); iter != for_loop_vars.rend(); ++iter) {
-            string idx_var = (*iter)->to_string();
-            if (max_delta.find(idx_var) != max_delta.end()) {
-                if (max_delta[idx_var] == min_delta[idx_var]) {
-                    continue;
-                } else {
-                    outmost_idx_var = idx_var;
-                    outmost_idx_var_pos = int(std::distance(iter, for_loop_vars.rend())) - 1;
-                    break;
-                }
-            }
-        }
-        // TODO: All used arrays have the same indices. Can be replaced by scalar.
-        // Compress it to the innermost loop var.
-        if (outmost_idx_var.empty()) {
-            std::cout << "------- !Exactly the same iv array: " << iv_array << "-------" << std::endl;
-            outmost_idx_var = for_loop_vars.front()->to_string();
-            outmost_idx_var_pos = 0;
-        }
-        // Collect outer_const_idx.
-        std::map<string, int> outer_const_idx; // The outer loop variables that iv_array refers to the same index, which can be compressed. e.g. {T[j][i+1],T[j][i]}'s outer_const_idx is j.
-        auto front_arr_ref = llvm_pointer_cast<ArrayRef>(used_iv[iv_array].front()->getExpression());
-        auto front_disp = front_arr_ref->getDisp();
-        for (size_t i = outmost_idx_var_pos + 1; i < for_loop_vars.size(); i++) {
-            string var = for_loop_vars[i]->to_string();
-            if (front_disp.find(var) != front_disp.end()) {
-                outer_const_idx[var] = front_disp[var];
-            }
-        }
-        // Replace the array with the compressed dim.
-        for (auto node : used_iv[iv_array]) {
-            auto src = node->getExpression();
-            if (auto arr_ref = llvm_pointer_cast<ArrayRef>(src)) {
-                auto disp = arr_ref->getDisp();
-                vector<std::pair<string, int>> new_disp;
-                for (size_t i = 0; i <= outmost_idx_var_pos; i++) { // TODO: Remove the outer loop var. Keep the outmost_idx_var itself. Can be compressed more on outmost_idx_var.
-                    string idx_var = for_loop_vars[i]->to_string();
-                    if (disp.find(idx_var) != disp.end()) {
-                        new_disp.push_back({idx_var, disp[idx_var]});
+        // Case 1: The array is pure DeclRef or Number. Insert it before outmost loop.
+        if (!info_manager.isArrayRef(iv_array)) { // TODO: Add support for pure DeclRef and Number iv_array.
+#ifdef DEBUG
+            std::cout << "------- !Not ArrayRef: " << iv_array << "-------" << std::endl;
+#endif
+            auto &body = outer_block->getBody();
+            auto assign = std::make_shared<ir::Assignment>(std::make_shared<ir::DeclRef>(iv_array), info_manager.getConstructRHS(iv_array));
+            body.insert(body.begin(), assign);
+        } 
+        // Case 2: The array here must be ArrayRef.
+        else {
+            // Compress dimension.
+            auto for_loop_vars = parent_for->getLoopVars();
+            auto max_delta = info_manager.getUsedMaxDelta(iv_array);
+            auto min_delta = info_manager.getUsedMinDelta(iv_array);
+            string outmost_idx_var; // The outmost loop variable that iv_array refers to different index. e.g. {T[j][i+1],T[j][i]}'s outmost_idx_var is i, since both refer to j.
+            size_t outmost_idx_var_pos = for_loop_vars.size();
+            for (auto iter = for_loop_vars.rbegin(); iter != for_loop_vars.rend(); ++iter) {
+                string idx_var = (*iter)->to_string();
+                if (max_delta.find(idx_var) != max_delta.end()) {
+                    if (max_delta[idx_var] == min_delta[idx_var]) {
+                        continue;
+                    } else {
+                        outmost_idx_var = idx_var;
+                        outmost_idx_var_pos = int(std::distance(iter, for_loop_vars.rend())) - 1;
+                        break;
                     }
                 }
-                auto new_arr = make_shared<ArrayRef>(iv_array, new_disp, parent_for);
-                node->setExpression(new_arr);
             }
-        }
-        // Generate array construct ForStmt.
-        auto construct_rhs = info_manager.getConstructRHS(iv_array, outer_const_idx);
-        const auto info = info_manager.getIVInfo(iv_array);
-        auto index_vars = info.index_vars;
-        shared_ptr<ir::Expression> construct_lhs;
-        if (index_vars.empty()) {
-            construct_lhs = std::make_shared<ir::DeclRef>(iv_array);
-        } else {
-            vector<std::pair<string, int>> disp;
-            for (const auto &idx : index_vars) {
-                if (outer_const_idx.find(idx) == outer_const_idx.end()) {
-                    disp.push_back({idx, 0});
+            // TODO: All used arrays have the same indices. Can be replaced by scalar.
+            // Compress it to the innermost loop var.
+            if (outmost_idx_var.empty()) {
+                std::cout << "------- !Exactly the same iv array: " << iv_array << "-------" << std::endl;
+                outmost_idx_var = for_loop_vars.front()->to_string();
+                outmost_idx_var_pos = 0;
+            }
+            // Collect outer_const_idx.
+            std::map<string, int> outer_const_idx; // The outer loop variables that iv_array refers to the same index, which can be compressed. e.g. {T[j][i+1],T[j][i]}'s outer_const_idx is j.
+            auto front_arr_ref = llvm_pointer_cast<ArrayRef>(used_iv[iv_array].front()->getExpression());
+            auto front_disp = front_arr_ref->getDisp();
+            for (size_t i = outmost_idx_var_pos + 1; i < for_loop_vars.size(); i++) {
+                string var = for_loop_vars[i]->to_string();
+                if (front_disp.find(var) != front_disp.end()) {
+                    outer_const_idx[var] = front_disp[var];
                 }
             }
-            construct_lhs = std::make_shared<ir::ArrayRef>(iv_array, disp, parent_for);
+            // Replace the array with the compressed dim.
+            for (auto node : used_iv[iv_array]) {
+                auto src = node->getExpression();
+                if (auto arr_ref = llvm_pointer_cast<ArrayRef>(src)) {
+                    auto disp = arr_ref->getDisp();
+                    vector<std::pair<string, int>> new_disp;
+                    for (size_t i = 0; i <= outmost_idx_var_pos; i++) { // TODO: Remove the outer loop var. Keep the outmost_idx_var itself. Can be compressed more on outmost_idx_var.
+                        string idx_var = for_loop_vars[i]->to_string();
+                        if (disp.find(idx_var) != disp.end()) {
+                            new_disp.push_back({idx_var, disp[idx_var]});
+                        }
+                    }
+                    auto new_arr = make_shared<ArrayRef>(iv_array, new_disp, parent_for);
+                    node->setExpression(new_arr);
+                }
+            }
+            // Generate array construct ForStmt.
+            auto construct_rhs = info_manager.getConstructRHS(iv_array, outer_const_idx);
+            const auto info = info_manager.getIVInfo(iv_array);
+            auto index_vars = info.index_vars;
+            shared_ptr<ir::Expression> construct_lhs;
+            if (index_vars.empty()) {
+                construct_lhs = std::make_shared<ir::DeclRef>(iv_array);
+            } else {
+                vector<std::pair<string, int>> disp;
+                for (const auto &idx : index_vars) {
+                    if (outer_const_idx.find(idx) == outer_const_idx.end()) {
+                        disp.push_back({idx, 0});
+                    }
+                }
+                construct_lhs = std::make_shared<ir::ArrayRef>(iv_array, disp, parent_for);
+            }
+            auto assign = std::make_shared<ir::Assignment>(construct_lhs, construct_rhs);
+            insertAssignment(outer_block, info_manager, assign);
         }
-        auto assign = std::make_shared<ir::Assignment>(construct_lhs, construct_rhs);
-        std::cout << assign->to_string() << std::endl;
-        insertAssignment(info_manager, assign);
+        
     }
 }
 
@@ -321,8 +331,8 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
                 filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
             }
         }
-#ifdef DEBUG
         std::cout << filtered_nodes.size() << " nodes in total.\n";
+#ifdef DEBUG
 #endif
 
         const auto &result = solver.solve(delta_graph, filtered_nodes);
