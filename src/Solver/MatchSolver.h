@@ -51,7 +51,7 @@ public:
 std::ostream &operator<<(std::ostream &os, const DeltaNode &node);
 
 class Solver {
-private:
+protected:
     // Temporary variables for the recursive function.
     vector<shared_ptr<DeltaNode>> temp_vec;
     std::map<size_t, int> temp_profit_map; // key: hash number, value: count of the node.
@@ -60,23 +60,52 @@ private:
     vector<shared_ptr<DeltaNode>> result;
     int profit;
 
-    // int computeProfit() {
-    //     int cnt = 0;
-    //     for (const auto &pair : temp_profit_map) {
-    //         cnt += pair.second - 1;
-    //     }
-    //     return cnt;
-    // }
+    virtual void init() {
+        temp_vec.clear();
+        temp_profit_map.clear();
+        temp_profit = 0;
+        result.clear();
+        profit = 0;
+    }
 
-    void _solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx);
+    virtual void _solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx);
 
 public:
     Solver() {}
 
-    // TODO: Get the connected components first and then solve the problem.
+    virtual vector<shared_ptr<DeltaNode>> solve(
+        const UDGraph<shared_ptr<DeltaNode>> &delta_graph) = 0;
+};
 
-    vector<shared_ptr<DeltaNode>> solve(
-        const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes);
+// Implement naive solver algorithm to compare performance.
+class NaiveSolver : public Solver{
+private:
+
+public:
+    virtual vector<shared_ptr<DeltaNode>> solve(
+        const UDGraph<shared_ptr<DeltaNode>> &delta_graph) override;
+};
+
+class OptSolver : public Solver {
+private:
+
+public:
+    virtual vector<shared_ptr<DeltaNode>> solve(
+        const UDGraph<shared_ptr<DeltaNode>> &delta_graph) override;
+};
+
+class DimFirstSolver : public Solver {
+private:
+    vector<string> loop_vars;
+public:
+    DimFirstSolver(const vector<string> &loop_vars) : loop_vars(loop_vars) {}
+    DimFirstSolver(const vector<shared_ptr<ir::DeclRef>> &loop_vars) {
+        for (const auto &var : loop_vars) {
+            this->loop_vars.push_back(var->to_string());
+        }
+    }
+    virtual vector<shared_ptr<DeltaNode>> solve(
+        const UDGraph<shared_ptr<DeltaNode>> &delta_graph) override;
 };
 
 #endif

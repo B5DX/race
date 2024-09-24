@@ -320,54 +320,10 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
         delta_graph.printGraph();
 #endif
         // Solve the delta-graph.
-        vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();
-        vector<std::set<size_t>> connected_component_hash_set(connected_components.size());
-        vector<bool> solved(connected_components.size(), false);
         vector<shared_ptr<DeltaNode>> result;
-        Solver solver;
-        for (size_t i = 0; i < connected_components.size(); i++) {
-            std::set<size_t> hash_numbers;
-            for (const auto &node : connected_components[i].getNodes()) {
-                hash_numbers.insert(node->getHash());
-            }
-            connected_component_hash_set[i] = hash_numbers;
-        }
-        for (size_t i = 0; i < connected_components.size(); i++) {
-            if (solved[i]) {
-                continue;
-            }
-            solved[i] = true;
-            auto &component = connected_components[i];
-            auto &hash_set = connected_component_hash_set[i];
-            for (size_t j = i + 1; j < connected_components.size(); j++) {
-                std::set<size_t> hash_set_intersection;
-                std::set_intersection(hash_set.begin(), hash_set.end(),
-                                      connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
-                                      std::inserter(hash_set_intersection, hash_set_intersection.begin()));
-                if (hash_set_intersection.size() > 0) {
-                    std::set_union(hash_set.begin(), hash_set.end(),
-                                connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
-                                std::inserter(hash_set, hash_set.begin()));
-                    solved[j] = true;
-                    component.concatGraph(connected_components[j]);
-                }
-            }
-
-            std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
-            for (const auto &node : component.getNodes()) {
-                hash_node_map[node->getHash()].push_back(node);
-            }
-            vector<shared_ptr<DeltaNode>> filtered_nodes;
-            for (const auto &iter : hash_node_map) {
-                if (iter.second.size() > 1) {
-                    filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
-                }
-            }
-            // std::cout << filtered_nodes.size() << " nodes in total.\n";
-            auto tmp_res = solver.solve(component, filtered_nodes);
-            result.insert(result.end(), tmp_res.begin(), tmp_res.end());
-        }
-
+        shared_ptr<Solver> solver = std::make_shared<DimFirstSolver>(info_manager.getParentFor()->getLoopVars());
+        result = solver->solve(delta_graph);
+        
         if (result.empty())
             break;
 
@@ -383,8 +339,10 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
             tree->printTree();
         }
 #endif
+        // info_manager.printInfo();
+        // std::cout << "-------------End of Extract-------------\n";
+        // exit(0);
     }
-
     // ! lower_bounds and upper_bounds has errors.
     postProcess(outer_block, info_manager, expr_trees);
 

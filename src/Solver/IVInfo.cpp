@@ -412,6 +412,7 @@ void IVInfoManager::printInfo() {
             for (auto i : arr.second.index_vars)
                 std::cout << i << " ";
             std::cout << "]" << std::endl;
+            std::cout << this->getConstructRHS(arr.first)->to_string() << std::endl;
         }
     }
     std::cout << "Referenced Count: " << std::endl;

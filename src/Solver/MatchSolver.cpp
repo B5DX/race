@@ -127,24 +127,191 @@ void Solver::_solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vec
         --temp_profit_map[nodes[idx]->getHash()];
         temp_vec.pop_back();
     }
-    
+
     // Branch 2: don't choose current node:
     _solve(delta_graph, nodes, idx + 1);
 }
 
-// TODO: Performance improvement needed. 
-// 1. Isolating the connected components' computation may be helpful. 
+vector<shared_ptr<DeltaNode>> NaiveSolver::solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph) {
+    std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
+    for (const auto &node : delta_graph.getNodes()) {
+        hash_node_map[node->getHash()].push_back(node);
+    }
+    vector<shared_ptr<DeltaNode>> filtered_nodes;
+    for (const auto &iter : hash_node_map) {
+        if (iter.second.size() > 1) {
+            filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
+        }
+    }
+
+    init();
+    _solve(delta_graph, filtered_nodes, 0);
+    return result;
+}
+
+// TODO: Performance improvement needed.
+// 1. Isolating the connected components' computation may be helpful.
 // 2. If nodes of certain hash number are all directly connected, then this hash number can be ignored.
 // 3. If a connected component contains all the nodes of a certain hash number, then this hash number's extract can be solved independently.
 // Tips: 连通分量+哈希值 可以优化。先找出所有连通分量，然后针对某个哈希值（例如0），找到所有包含0的连通分量，如果这些分量包含其他哈希值则继续递归，直到所有找到的连通分量之外都不再包含连通分量中的任何哈希值，则该子图可以独立计算。
-vector<shared_ptr<DeltaNode>> Solver::solve(
-    const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes) {
-    // Initialize the temporary variables.
-    temp_vec.clear();
-    temp_profit_map.clear();
-    temp_profit = 0;
-    result.clear();
-    profit = 0;
-    _solve(delta_graph, nodes, 0);
-    return result;
+vector<shared_ptr<DeltaNode>> OptSolver::solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph) {
+    vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();
+    // std::cout << "Connected components: " << connected_components.size() << "\n";
+    // connected_component_hash_set[i] is the hash_number appeared in connected_components[i].
+    vector<std::set<size_t>> connected_component_hash_set(connected_components.size());
+    vector<bool> solved(connected_components.size(), false);
+    // The result which will be returned.
+    vector<shared_ptr<DeltaNode>> ret;
+    // Set connected_component_hash_set.
+    for (size_t i = 0; i < connected_components.size(); i++) {
+        std::set<size_t> hash_numbers;
+        for (const auto &node : connected_components[i].getNodes()) {
+            hash_numbers.insert(node->getHash());
+        }
+        connected_component_hash_set[i] = hash_numbers;
+    }
+    // Solve each related components.
+    // ! The connected_components will be changed. It shouldn't be used afterwards.
+    for (size_t i = 0; i < connected_components.size(); i++) {
+        if (solved[i]) {
+            continue;
+        }
+        solved[i] = true;
+        // component may be changed. So connected_components[i] shouldn't be used again.
+        auto &component = connected_components[i];
+        auto &hash_set = connected_component_hash_set[i];
+        for (size_t j = i + 1; j < connected_components.size(); j++) {
+            std::set<size_t> hash_set_intersection;
+            std::set_intersection(hash_set.begin(), hash_set.end(),
+                                  connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
+                                  std::inserter(hash_set_intersection, hash_set_intersection.begin()));
+            if (hash_set_intersection.size() > 0) {
+                // std::cout << "Connected component " << i << " and " << j << " have intersection.\n";
+                std::set_union(hash_set.begin(), hash_set.end(),
+                               connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
+                               std::inserter(hash_set, hash_set.begin()));
+                solved[j] = true;
+                // ! Here the component is changed, which is a reference to connected_components[i].
+                component.concatGraph(connected_components[j]);
+            }
+        }
+
+        std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
+        for (const auto &node : component.getNodes()) {
+            hash_node_map[node->getHash()].push_back(node);
+        }
+        vector<shared_ptr<DeltaNode>> filtered_nodes;
+        for (const auto &iter : hash_node_map) {
+            if (iter.second.size() > 1) {
+                filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
+            }
+        }
+
+        // std::cout << "Solving connected component " << i << " with " << filtered_nodes.size() << " nodes.\n";
+
+        // Solve current connected component. Results will be stored in this->result.
+        init();
+        _solve(component, filtered_nodes, 0);
+        ret.insert(ret.end(), result.begin(), result.end());
+    }
+    return ret;
+}
+
+vector<shared_ptr<DeltaNode>> DimFirstSolver::solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph) {
+    vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();
+    // std::cout << "Connected components: " << connected_components.size() << "\n";
+    // connected_component_hash_set[i] is the hash_number appeared in connected_components[i].
+    vector<std::set<size_t>> connected_component_hash_set(connected_components.size());
+    vector<bool> solved(connected_components.size(), false);
+    // The result which will be returned.
+    vector<shared_ptr<DeltaNode>> ret;
+    // Set connected_component_hash_set.
+    for (size_t i = 0; i < connected_components.size(); i++) {
+        std::set<size_t> hash_numbers;
+        for (const auto &node : connected_components[i].getNodes()) {
+            hash_numbers.insert(node->getHash());
+        }
+        connected_component_hash_set[i] = hash_numbers;
+    }
+    // Solve each related components.
+    // ! The connected_components will be changed. It shouldn't be used afterwards.
+    for (size_t i = 0; i < connected_components.size(); i++) {
+        if (solved[i]) {
+            continue;
+        }
+        solved[i] = true;
+        // component may be changed. So connected_components[i] shouldn't be used again.
+        auto &component = connected_components[i];
+        auto &hash_set = connected_component_hash_set[i];
+        for (size_t j = i + 1; j < connected_components.size(); j++) {
+            std::set<size_t> hash_set_intersection;
+            std::set_intersection(hash_set.begin(), hash_set.end(),
+                                  connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
+                                  std::inserter(hash_set_intersection, hash_set_intersection.begin()));
+            if (hash_set_intersection.size() > 0) {
+                // std::cout << "Connected component " << i << " and " << j << " have intersection.\n";
+                std::set_union(hash_set.begin(), hash_set.end(),
+                               connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
+                               std::inserter(hash_set, hash_set.begin()));
+                solved[j] = true;
+                // ! Here the component is changed, which is a reference to connected_components[i].
+                component.concatGraph(connected_components[j]);
+            }
+        }
+        std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
+        for (const auto &node : component.getNodes()) {
+            hash_node_map[node->getHash()].push_back(node);
+        }
+        bool flag = false;
+        // TODO: This can also be achieved by the priority computation in _solve function. Maybe a adjusted priority value can elegently solve this.
+        // Search for results by loop variables' priority and non-zero deltas' count.
+        // 1. Search for the innermost loop variable to solve.
+        for (int loop_var_priority = 0; loop_var_priority < loop_vars.size(); loop_var_priority++) {
+            // 2. Search for as many zero-delta loop variables as possible.
+            for (int delta_cnt = 1; delta_cnt <= loop_vars.size(); delta_cnt++) {
+                string cur_var = this->loop_vars[loop_var_priority];
+                vector<shared_ptr<DeltaNode>> filtered_nodes;
+                for (const auto &iter : hash_node_map) {
+                    if (iter.second.size() > 1) {
+                        auto delta = iter.second.front()->getDelta();
+                        if (delta.find(cur_var) != delta.end() && delta.at(cur_var) == 0) {
+                            int cur_cnt = 0;
+                            for (const auto &cur_delta : delta) {
+                                if (cur_delta.second != 0) {
+                                    cur_cnt++;
+                                }
+                            }
+                            // delta.at(cur_var) == 0. And the number of non-zero deltas is less than or equal to delta_cnt.
+                            if (cur_cnt <= delta_cnt) {
+                                filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
+                            }
+                        }
+                    }
+                }
+                init();
+                _solve(component, filtered_nodes, 0);
+                if (result.size() > 0) {
+                    ret.insert(ret.end(), result.begin(), result.end());
+                    flag = true;
+                    break;
+                }
+            }
+            if (flag) {
+                break;
+            }
+        }
+        // If can't find any result by the loop variables' priority and non-zero deltas' count. Search for all nodes.
+        if (!flag) {
+            vector<shared_ptr<DeltaNode>> filtered_nodes;
+            for (const auto &iter : hash_node_map) {
+                if (iter.second.size() > 1) {
+                    filtered_nodes.insert(filtered_nodes.end(), iter.second.begin(), iter.second.end());
+                }
+            }
+            init();
+            _solve(component, filtered_nodes, 0);
+            ret.insert(ret.end(), result.begin(), result.end());
+        }
+    }
+    return ret;
 }
