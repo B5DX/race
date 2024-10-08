@@ -1,5 +1,6 @@
 #include <iostream>
 #include <time.h>
+#include <math.h>
 using namespace std;
 
 // #define j_start 5
@@ -90,35 +91,70 @@ int main() {
     // }
     // #pragma avn end
 
-    for (int t = 0; t < T; t++) {
-        #pragma avn begin
-        for (j = j_start; j <= jtf; j++) {
-            for (k = k_start; k <= ktf; k++) {
-                for (i = i_start; i <= itf; i++) {
-                    // mkrdxm = (test2*test1 + test2*test1);
-                    // mkrdxm = (C[i]*D[i] * C[i+1]*D[i+1]);
-                    // mkrdxm = (test2*test1*C[i-1] + B[i][j-1] + test2*test1*C[i+1] + B[i+2][j-1]);
-                    // mkrdxm = (test2*test1*C[i] + B[i+2][j] + test2*test1*C[i+3] + B[i+4][j]);
-                    // mkrdxm = msfux[j][i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]) * msfuy[j][1+i];
-                    // A[j][k][i] = 0.54 * (A[j][k][i]) + \
-                    //     0.03 * (A[j][k][i-1] + A[j][k-1][i] + \
-                    //             A[j][k+1][i] + A[j][k][i+1] + \
-                    //             A[j-1][k][i] + A[j+1][k][i]);
+    // for (int t = 0; t < T; t++) {
+    //     #pragma avn begin
+    //     for (j = j_start; j <= jtf; j++) {
+    //         for (k = k_start; k <= ktf; k++) {
+    //             for (i = i_start; i <= itf; i++) {
+    //                 // mkrdxm = (test2*test1 + test2*test1);
+    //                 // mkrdxm = (C[i]*D[i] * C[i+1]*D[i+1]);
+    //                 // mkrdxm = (test2*test1*C[i-1] + B[i][j-1] + test2*test1*C[i+1] + B[i+2][j-1]);
+    //                 // mkrdxm = (test2*test1*C[i] + B[i+2][j] + test2*test1*C[i+3] + B[i+4][j]);
+    //                 // mkrdxm = msfux[j][i] * (xkmhd[j][k][i] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 2] + xkmhd[j][k][i + 4]) * msfuy[j][1+i];
+    //                 // A[j][k][i] = 0.54 * (A[j][k][i]) + \
+    //                 //     0.03 * (A[j][k][i-1] + A[j][k-1][i] + \
+    //                 //             A[j][k+1][i] + A[j][k][i+1] + \
+    //                 //             A[j-1][k][i] + A[j+1][k][i]);
 
-                    mkrdxm=((((((msfux[j][i]/msfuy[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j][k][i-1]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j][i-1])+c2[k])))*rdx);
-                    mkrdxp=((((((msfux[j][i+1]/msfuy[j][i+1])*0.500000)*(xkmhd[j][k][i+1]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j][i+1])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdx);
-                    mrdx=((msftx[j][i]*msfty[j][i])*rdx);
-                    mkrdym=((((((msfvy[j][i]*msfvx_inv[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j-1][k][i]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j-1][i])+c2[k])))*rdy);
-                    mkrdyp=((((((msfvy[j+1][i]*msfvx_inv[j+1][i])*0.500000)*(xkmhd[j+1][k][i]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j+1][i])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdy);
-                    mrdy=((msftx[j][i]*msfty[j][i])*rdy);
-                    tendency[j][k][i]=(tendency[j][k][i]+((mrdx*((mkrdxp*(field[j][k][i+1]-field[j][k][i]))-(mkrdxm*(field[j][k][i]-field[j][k][i-1]))))+(mrdy*((mkrdyp*(field[j+1][k][i]-field[j][k][i]))-(mkrdym*(field[j][k][i]-field[j-1][k][i]))))));
-                    // tendency[j][k][i] = tendency[j][k][i] + (((msftx[j][i]*msfty[j][i])*rdx) * ((msfux[j][i + 1] / msfuy[j][i + 1] * 0.500000 * (xkmhd[j][k][i + 1] + xkmhd[j][k][i]) * 0.500000 * (c1[k] * MUT[j][i + 1] + c2[k] + (c1[k] * MUT[j][i] + c2[k])) * rdx) * (field[j][k][i + 1] - field[j][k][i]) - (msfux[j][i] / msfuy[j][i] * 0.500000 * (xkmhd[j][k][i] + xkmhd[j][k][i - 1]) * 0.500000 * (c1[k] * MUT[j][i] + c2[k] + (c1[k] * MUT[j][i - 1] + c2[k])) * rdx) * (field[j][k][i] - field[j][k][i - 1])) + ((msftx[j][i]*msfty[j][i])*rdy) * ((msfvy[j + 1][i] * msfvx_inv[j + 1][i] * 0.500000 * (xkmhd[j + 1][k][i] + xkmhd[j][k][i]) * 0.500000 * (c1[k] * MUT[j + 1][i] + c2[k] + (c1[k] * MUT[j][i] + c2[k])) * rdy) * (field[j + 1][k][i] - field[j][k][i]) - (msfvy[j][i] * msfvx_inv[j][i] * 0.500000 * (xkmhd[j][k][i] + xkmhd[j - 1][k][i]) * 0.500000 * (c1[k] * MUT[j][i] + c2[k] + (c1[k] * MUT[j - 1][i] + c2[k])) * rdy) * (field[j][k][i] - field[j - 1][k][i])));
+    //                 mkrdxm=((((((msfux[j][i]/msfuy[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j][k][i-1]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j][i-1])+c2[k])))*rdx);
+    //                 mkrdxp=((((((msfux[j][i+1]/msfuy[j][i+1])*0.500000)*(xkmhd[j][k][i+1]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j][i+1])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdx);
+    //                 mrdx=((msftx[j][i]*msfty[j][i])*rdx);
+    //                 mkrdym=((((((msfvy[j][i]*msfvx_inv[j][i])*0.500000)*(xkmhd[j][k][i]+xkmhd[j-1][k][i]))*0.500000)*(((c1[k]*MUT[j][i])+c2[k])+((c1[k]*MUT[j-1][i])+c2[k])))*rdy);
+    //                 mkrdyp=((((((msfvy[j+1][i]*msfvx_inv[j+1][i])*0.500000)*(xkmhd[j+1][k][i]+xkmhd[j][k][i]))*0.500000)*(((c1[k]*MUT[j+1][i])+c2[k])+((c1[k]*MUT[j][i])+c2[k])))*rdy);
+    //                 mrdy=((msftx[j][i]*msfty[j][i])*rdy);
+    //                 tendency[j][k][i]=(tendency[j][k][i]+((mrdx*((mkrdxp*(field[j][k][i+1]-field[j][k][i]))-(mkrdxm*(field[j][k][i]-field[j][k][i-1]))))+(mrdy*((mkrdyp*(field[j+1][k][i]-field[j][k][i]))-(mkrdym*(field[j][k][i]-field[j-1][k][i]))))));
+    //                 // tendency[j][k][i] = tendency[j][k][i] + (((msftx[j][i]*msfty[j][i])*rdx) * ((msfux[j][i + 1] / msfuy[j][i + 1] * 0.500000 * (xkmhd[j][k][i + 1] + xkmhd[j][k][i]) * 0.500000 * (c1[k] * MUT[j][i + 1] + c2[k] + (c1[k] * MUT[j][i] + c2[k])) * rdx) * (field[j][k][i + 1] - field[j][k][i]) - (msfux[j][i] / msfuy[j][i] * 0.500000 * (xkmhd[j][k][i] + xkmhd[j][k][i - 1]) * 0.500000 * (c1[k] * MUT[j][i] + c2[k] + (c1[k] * MUT[j][i - 1] + c2[k])) * rdx) * (field[j][k][i] - field[j][k][i - 1])) + ((msftx[j][i]*msfty[j][i])*rdy) * ((msfvy[j + 1][i] * msfvx_inv[j + 1][i] * 0.500000 * (xkmhd[j + 1][k][i] + xkmhd[j][k][i]) * 0.500000 * (c1[k] * MUT[j + 1][i] + c2[k] + (c1[k] * MUT[j][i] + c2[k])) * rdy) * (field[j + 1][k][i] - field[j][k][i]) - (msfvy[j][i] * msfvx_inv[j][i] * 0.500000 * (xkmhd[j][k][i] + xkmhd[j - 1][k][i]) * 0.500000 * (c1[k] * MUT[j][i] + c2[k] + (c1[k] * MUT[j - 1][i] + c2[k])) * rdy) * (field[j][k][i] - field[j - 1][k][i])));
 
-                }
+    //             }
+    //         }
+    //     }
+    //     #pragma avn end
+    // }
+
+    const int nblocks_clinic = 10;
+    const int ny_block = 10;
+    const int nx_block = 10;
+    int ULAT[nblocks_clinic][ny_block][nx_block];
+    int ULON[nblocks_clinic][ny_block][nx_block];
+    int zsw, xsw, ysw, zs, xs, ys, zw, xw, yw, zc, xc, yc, tx, ty, tz;
+    int p25 = 25;
+    #pragma avn begin
+    for (int n = 1; n <= nblocks_clinic; n++) {
+        for (int j = 2; j <= ny_block; j++) {
+            for (int i = 2; i <= nx_block; i++) {
+                zsw=-cos(ULAT[n][j-1][i-1] + ULON[n][j-1][i-1]);
+                xsw=cos(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]);
+                ysw=sin(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]);
+                zsw=sin(ULAT[n][j-1][i-1]);
+                zs=cos(ULAT[n][j-1][i] + ULON[n][j-1][i]);
+                xs=cos(ULON[n][j-1][i])*cos(ULAT[n][j-1][i]);
+                ys=sin(ULON[n][j-1][i])*cos(ULAT[n][j-1][i]);
+                zs=sin(ULAT[n][j-1][i]);
+                zw=cos(ULAT[n][j][i-1]);
+                xw=cos(ULON[n][j][i-1])*cos(ULAT[n][j][i-1]);
+                yw=sin(ULON[n][j][i-1])*cos(ULAT[n][j][i-1]);
+                zw=sin(ULAT[n][j][i-1]);
+                zc=cos(ULAT[n][j][i]);
+                xc=cos(ULON[n][j][i])*cos(ULAT[n][j][i]);
+                yc=sin(ULON[n][j][i])*cos(ULAT[n][j][i]);
+                zc=sin(ULAT[n][j][i]);
+                tx = p25*(xc+xs+xw+xsw);
+                ty = p25*(yc+ys+yw+ysw);
+                tz = p25*(zc+zs+zw+zsw);
             }
         }
-        #pragma avn end
     }
+    #pragma avn end
 
     return 0;
 }

@@ -20,14 +20,6 @@ string UnaryOp::to_string() const {
     return op + generateParenthesesStr(expr.get(), this, std::less_equal<int>());
 }
 
-string SinOp::to_string() const {
-    return "sin(" + expr->to_string() + ")";
-}
-
-string CosOp::to_string() const {
-    return "cos(" + expr->to_string() + ")";
-}
-
 string BinaryOp::to_string() const {
     string lhs_str, rhs_str;
     lhs_str = generateParenthesesStr(lhs.get(), this, std::less<int>());
@@ -68,14 +60,16 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
     } else if (auto decl_ref = llvm::dyn_cast<clang::DeclRefExpr>(expr)) {
         return std::make_shared<DeclRef>(decl_ref->getNameInfo().getAsString());
     } else if (auto call_expr = llvm::dyn_cast<clang::CallExpr>(expr)) {
-        auto callee = call_expr->getCallee();
+        auto callee = call_expr->getCallee()->IgnoreImplicit();
         if (auto decl_ref = llvm::dyn_cast<clang::DeclRefExpr>(callee)) {
             if (decl_ref->getNameInfo().getAsString() == "sin") {
                 auto arg = call_expr->getArg(0);
-                return std::make_shared<SinOp>(parseExpression(arg, parent_loop));
+                auto sinop = std::make_shared<SinOp>(parseExpression(arg, parent_loop));
+                return std::make_shared<CallOp>(sinop);
             } else if (decl_ref->getNameInfo().getAsString() == "cos") {
                 auto arg = call_expr->getArg(0);
-                return std::make_shared<CosOp>(parseExpression(arg, parent_loop));
+                auto cosop = std::make_shared<CosOp>(parseExpression(arg, parent_loop));
+                return std::make_shared<CallOp>(cosop);
             }
         }
     } else if (auto integer_literal = llvm::dyn_cast<clang::IntegerLiteral>(expr)) {
@@ -379,6 +373,8 @@ shared_ptr<ir::BinaryOp> ir::buildBinaryOp(string op, shared_ptr<ir::Expression>
         return std::make_shared<ir::MulOp>(l_expr, r_expr);
     } else if (op == "/") {
         return std::make_shared<ir::DivOp>(l_expr, r_expr);
+    } else if (op == "call") {
+        return std::make_shared<ir::CallOp>(l_expr, r_expr);
     } else {
         throw std::runtime_error("Unsupported operator.");
     }

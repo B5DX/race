@@ -36,6 +36,7 @@ void IVInfoManager::registerNativeArray(const shared_ptr<ir::ExprTree> &tree) {
                 iv_info_map[name] = iv_info;
             }
         }
+        // None of the above, which means it's an sin or cos in CallOp, do nothing.
     }
 }
 

@@ -15,7 +15,7 @@ void ExprTreeNode::hoist() {
         children[i]->hoist();
     }
     // "-" and "/" shouldn't be hoisted directly.
-    if (this->to_string() != "-" && this->to_string() != "/") {
+    if (this->to_string() != "-" && this->to_string() != "/" && this->to_string() != "call") {
         for (int i = 0; i < children_len; i++) {
             // This insert operation will maintain the original order of children. But takes more time.
             // (Maybe it can be considered to change children vector to list if the order matters?)
@@ -41,16 +41,27 @@ void ExprTreeNode::deposit() {
     size_t children_len = children.size();
     if (children_len == 0)
         return;
-
-    // deposit children first
+    // Deposit children first
     for (size_t i = 0; i < children_len; i++) {
         children[i]->deposit();
     }
-    // copy children to queue
+    // Copy children to queue
     deque<shared_ptr<ExprTreeNode>> node_queue;
     for (auto child : children) {
         node_queue.push_back(child);
     }
+
+    if (node_queue.size() == 1) { // Only one child, this node should be a unary operator.
+        auto child = node_queue.front();
+        if (auto uop = llvm_pointer_cast<UnaryOp>(src)) {
+            uop->setOperand(child->getExpression());
+        } else {
+            throw std::runtime_error("Only unary operator can have one child.");
+        }        
+        return;
+    }
+
+    // Only binary operator can reach here.
     // Build new binary tree. The last one node in the queue is the new root, which will replace this node.
     while (node_queue.size() > 1) {
         auto node1 = node_queue.front();
@@ -69,6 +80,10 @@ void ExprTreeNode::deposit() {
             biop = make_shared<DivOp>();
         } else if (auto as = llvm_pointer_cast<AssignOp>(src)) {
             biop = make_shared<AssignOp>();
+        } else if (auto call = llvm_pointer_cast<CallOp>(src)) {
+            biop = make_shared<CallOp>();
+        } else {
+            throw std::runtime_error("Unknown operator type.");
         }
         biop->setLHS(node1->getExpression());
         biop->setRHS(node2->getExpression());
@@ -80,7 +95,7 @@ void ExprTreeNode::deposit() {
         new_expr_node->addChild(node2);
         node_queue.push_front(new_expr_node);
     }
-    // copy new root's info to replace this node.
+    // Copy new root's info to replace this node.
     children.clear();
     auto new_root = node_queue.front();
     for (auto child : new_root->getChildren()) {
@@ -127,6 +142,8 @@ void ExprTree::buildTree(shared_ptr<ExprTreeNode> root, shared_ptr<ir::Expressio
         buildTree(root->getChildren().front(), biop->getLHS());
         buildTree(root->getChildren().back(), biop->getRHS());
     } else if (auto uop = llvm_pointer_cast<UnaryOp>(e)) {
+        if (llvm_isa<ir::SinOp>(uop) || llvm_isa<ir::CosOp>(uop))
+            return;
         root->addChild(uop->getOperand());
         buildTree(root->getChildren().front(), uop->getOperand());
     } else {

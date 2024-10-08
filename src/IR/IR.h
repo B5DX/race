@@ -20,6 +20,7 @@ enum PRIORITIES {
     PRIORITY_ADD = 1,
     PRIORITY_MUL = 2,
     PRIORITY_UNARY = 3,
+    PRIORITY_CALL = 4,
 };
 
 class Statement {
@@ -56,6 +57,7 @@ public:
         EXPR_MULOP,
         EXPR_DIVOP,
         EXPR_ASSIGN,
+        EXPR_CALLOP,
         EXPR_BINARY_LAST,
         EXPR_OPERATOR_LAST,
         EXPR_NUMBER,
@@ -145,7 +147,9 @@ public:
 class SinOp : public UnaryOp {
 public:
     SinOp(shared_ptr<Expression> expr) : UnaryOp(EXPR_SINOP, "sin", expr) {}
-    virtual string to_string() const override;
+    virtual string to_string() const override {
+        return "sin";
+    }
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_SINOP;
@@ -159,7 +163,9 @@ public:
 class CosOp : public UnaryOp {
 public:
     CosOp(shared_ptr<Expression> expr) : UnaryOp(EXPR_COSOP, "cos", expr) {}
-    virtual string to_string() const override;
+    virtual string to_string() const override {
+        return "cos";
+    }
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() == EXPR_COSOP;
@@ -349,6 +355,33 @@ public:
     virtual void setRHS(shared_ptr<Expression> rhs) { this->rhs = rhs; }
 
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_ASSIGN; }
+};
+
+/**
+ * Example:
+ *      call
+ *     /   \         <=> sin(A[i][j])
+ *   sin    A[i][j]
+ */
+
+class CallOp : public BinaryOp {
+public:
+    CallOp() : BinaryOp(EXPR_CALLOP, "call", nullptr, nullptr) {}
+    CallOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_CALLOP, "call", lhs, rhs) {}
+    CallOp(shared_ptr<SinOp> sinop) : BinaryOp(EXPR_CALLOP, "call", sinop, sinop->getOperand()) {}
+    CallOp(shared_ptr<CosOp> cosop) : BinaryOp(EXPR_CALLOP, "call", cosop, cosop->getOperand()) {}
+
+    virtual PRIORITIES get_priority() const override { return PRIORITY_CALL; }
+
+    virtual string to_string() const override { return lhs->to_string() + "(" + rhs->to_string() + ")"; }
+
+    static bool classof(const Expression *expr) {
+        return expr->get_kind() == EXPR_CALLOP;
+    }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<CallOp>(lhs->clone(), rhs->clone());
+    }
 };
 
 class ForStmt;

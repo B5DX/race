@@ -238,7 +238,7 @@ void postProcess(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager,
 
 // TODO: Only support one loop var with coefficient 1 in each array index.
 void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) {
-    vector<string> op_list = {"+", "-", "*", "/"}; // TODO: support sin and cos.
+    vector<string> op_list = {"+", "-", "*", "/", "call"}; // TODO: support sin and cos.
     std::map<string, vector<TreeNodeVec>> candidates;
     IVInfoManager info_manager;
     int iv_cnt = 0;
@@ -259,11 +259,13 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
             }
         }
 #ifdef DEBUG
+        llvm::outs() << "--------printTree--------\n";
         tree->printTree();
 #endif
         info_manager.registerNativeArray(tree);
     }
 #ifdef DEBUG
+    llvm::outs() << "--------printInfo--------\n";
     info_manager.printInfo();
 #endif
     while (true) { // Recursively extract.
@@ -271,8 +273,9 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
         for (const auto &tree : expr_trees) {
             collectCandidates(tree, candidates);
         }
-        // print candidates
 #ifdef DEBUG
+        llvm::outs() << "--------printCandidates--------\n";
+        // print candidates
         for (auto op : op_list) {
             llvm::outs() << op << ":\n";
             for (auto cand : candidates[op]) {
@@ -288,7 +291,7 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
         bool commutable = true;
         // Begin to construct the delta-graph.
         for (auto op : op_list) {
-            if (op == "-" || op == "/") {
+            if (op == "-" || op == "/" || op == "call") {
                 commutable = false;
             } else {
                 commutable = true;
@@ -321,7 +324,8 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
 #endif
         // Solve the delta-graph.
         vector<shared_ptr<DeltaNode>> result;
-        shared_ptr<Solver> solver = std::make_shared<DimFirstSolver>(info_manager.getParentFor()->getLoopVars());
+        // shared_ptr<Solver> solver = std::make_shared<DimFirstSolver>(info_manager.getParentFor()->getLoopVars());
+        shared_ptr<Solver> solver = std::make_shared<OptSolver>();
         result = solver->solve(delta_graph);
         
         if (result.empty())
@@ -335,6 +339,7 @@ void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) 
 #endif
         replaceMatchCand(result, iv_cnt, avn_cnt, info_manager);
 #ifdef DEBUG
+        std::cout << "-------------After Replace-------------\n";
         for (const auto &tree : expr_trees) {
             tree->printTree();
         }

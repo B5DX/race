@@ -25,7 +25,6 @@
  * Explanation: 
  */
 struct IVInfo {
-    // shared_ptr<ir::Expression> iv_expr = nullptr;
     using Disp = vector<std::pair<string, int>>; // e.g. A[j+1][i+2] -> {("i", 2), ("j", 1)}.
     string op;
     vector<string> operands; // assert(operands.size() == disp.size()). If operand[i] is DeclRef or Number, disp[i] is empty.
