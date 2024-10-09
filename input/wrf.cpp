@@ -128,25 +128,34 @@ int main() {
     int ULON[nblocks_clinic][ny_block][nx_block];
     int zsw, xsw, ysw, zs, xs, ys, zw, xw, yw, zc, xc, yc, tx, ty, tz;
     int p25 = 25;
+    int iv_0_1[ny_block + 1][nx_block + 1], iv_0_0[ny_block + 1][nx_block + 1], iv_0_3[ny_block + 1][nx_block + 1], iv_0_2[ny_block + 1][nx_block + 1];
+
+    // #pragma avn begin
+    // for (int i = 0; i < 10; i++) {
+    //     p25 = msftx[i][j] + msfty[i][j];
+    //     p25 = msftx[i][j-1] + msfty[i][j-1];
+    // }
+    // #pragma avn end
+
     #pragma avn begin
     for (int n = 1; n <= nblocks_clinic; n++) {
         for (int j = 2; j <= ny_block; j++) {
             for (int i = 2; i <= nx_block; i++) {
-                zsw=-cos(ULAT[n][j-1][i-1] + ULON[n][j-1][i-1]);
-                xsw=cos(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]);
-                ysw=sin(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]);
+                zsw=cos(ULAT[n][j-1][i-1]);
+                xsw=cos(ULON[n][j-1][i-1])*zsw;
+                ysw=sin(ULON[n][j-1][i-1])*zsw;
                 zsw=sin(ULAT[n][j-1][i-1]);
-                zs=cos(ULAT[n][j-1][i] + ULON[n][j-1][i]);
-                xs=cos(ULON[n][j-1][i])*cos(ULAT[n][j-1][i]);
-                ys=sin(ULON[n][j-1][i])*cos(ULAT[n][j-1][i]);
+                zs=cos(ULAT[n][j-1][i]);
+                xs=cos(ULON[n][j-1][i])*zs;
+                ys=sin(ULON[n][j-1][i])*zs;
                 zs=sin(ULAT[n][j-1][i]);
                 zw=cos(ULAT[n][j][i-1]);
-                xw=cos(ULON[n][j][i-1])*cos(ULAT[n][j][i-1]);
-                yw=sin(ULON[n][j][i-1])*cos(ULAT[n][j][i-1]);
+                xw=cos(ULON[n][j][i-1])*zw;
+                yw=sin(ULON[n][j][i-1])*zw;
                 zw=sin(ULAT[n][j][i-1]);
                 zc=cos(ULAT[n][j][i]);
-                xc=cos(ULON[n][j][i])*cos(ULAT[n][j][i]);
-                yc=sin(ULON[n][j][i])*cos(ULAT[n][j][i]);
+                xc=cos(ULON[n][j][i])*zc;
+                yc=sin(ULON[n][j][i])*zc;
                 zc=sin(ULAT[n][j][i]);
                 tx = p25*(xc+xs+xw+xsw);
                 ty = p25*(yc+ys+yw+ysw);
@@ -155,6 +164,37 @@ int main() {
         }
     }
     #pragma avn end
+
+    // #pragma avn begin
+    // for (int n = 1; n <= nblocks_clinic; n++) {
+    //     for (int j = 2; j <= ny_block; j++) {
+    //         for (int i = 2; i <= nx_block; i++) {
+    //             // zsw=cos(ULAT[n][j-1][i-1]);
+    //             // xsw=cos(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]);
+    //             // ysw=sin(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]);
+    //             // zsw1=sin(ULAT[n][j-1][i-1]);
+    //             // zs=cos(ULAT[n][j-1][i]);
+    //             // xs=cos(ULON[n][j-1][i])*cos(ULAT[n][j-1][i]);
+    //             // ys=sin(ULON[n][j-1][i])*cos(ULAT[n][j-1][i]);
+    //             // zs1=sin(ULAT[n][j-1][i]);
+    //             // zw=cos(ULAT[n][j][i-1]);
+    //             // xw=cos(ULON[n][j][i-1])*cos(ULAT[n][j][i-1]);
+    //             // yw=sin(ULON[n][j][i-1])*cos(ULAT[n][j][i-1]);
+    //             // zw1=sin(ULAT[n][j][i-1]);
+    //             // zc=cos(ULAT[n][j][i]);
+    //             // xc=cos(ULON[n][j][i])*cos(ULAT[n][j][i]);
+    //             // yc=sin(ULON[n][j][i])*cos(ULAT[n][j][i]);
+    //             // zc1=sin(ULAT[n][j][i]);
+    //             tx = p25*(cos(ULON[n][j][i])*cos(ULAT[n][j][i])+cos(ULON[n][j-1][i])*cos(ULAT[n][j-1][i])+cos(ULON[n][j][i-1])*cos(ULAT[n][j][i-1])+cos(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]));
+    //             ty = p25*(sin(ULON[n][j][i])*cos(ULAT[n][j][i])+sin(ULON[n][j-1][i])*cos(ULAT[n][j-1][i])+sin(ULON[n][j][i-1])*cos(ULAT[n][j][i-1])+sin(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]));
+    //             tz = p25*(sin(ULAT[n][j][i])+sin(ULAT[n][j-1][i])+sin(ULAT[n][j][i-1])+sin(ULAT[n][j-1][i-1]));
+    //             tx = p25*(cos(ULON[n][j][i])*cos(ULAT[n][j][i])+cos(ULON[n][j-1][i])*cos(ULAT[n][j-1][i])+cos(ULON[n][j][i-1])*cos(ULAT[n][j][i-1])+cos(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]));
+    //             ty = p25*(sin(ULON[n][j][i])*cos(ULAT[n][j][i])+sin(ULON[n][j-1][i])*cos(ULAT[n][j-1][i])+sin(ULON[n][j][i-1])*cos(ULAT[n][j][i-1])+sin(ULON[n][j-1][i-1])*cos(ULAT[n][j-1][i-1]));
+    //             tz = p25*(sin(ULAT[n][j][i])+sin(ULAT[n][j-1][i])+sin(ULAT[n][j][i-1])+sin(ULAT[n][j-1][i-1]));
+    //         }
+    //     }
+    // }
+    // #pragma avn end
 
     return 0;
 }

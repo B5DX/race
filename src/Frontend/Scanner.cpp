@@ -66,13 +66,7 @@ void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
             vector<ir::Block> blocks = this->for_stmt->getInnermostBlocks();
             
             for (const auto &block : blocks) {
-                extract::Forest expr_trees;
-                for (const auto &stmt : block) {
-                    auto assign = ir::llvm_pointer_cast<ir::Assignment>(stmt);
-                    assert(assign);
-                    expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
-                }
-                extract::extract(outer_block, expr_trees, this->avn_cnt++);
+                extract::extract(outer_block, block, this->avn_cnt++);
             }
             llvm::outs() << outer_block->to_string() << "\n";
         }

@@ -348,7 +348,7 @@ protected:
 public:
     Assignment(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN), lhs(lhs), rhs(rhs) {}
 
-    virtual string to_string() const override { return lhs->to_string() + " = " + rhs->to_string(); }
+    virtual string to_string() const override { return lhs->to_string() + " = " + rhs->to_string() + ";"; }
     virtual shared_ptr<Expression> getLHS() const { return lhs; }
     virtual shared_ptr<Expression> getRHS() const { return rhs; }
     virtual void setLHS(shared_ptr<Expression> lhs) { this->lhs = lhs; }

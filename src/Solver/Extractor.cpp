@@ -111,8 +111,8 @@ void insertAssignment(shared_ptr<ir::Block> outer_block, IVInfoManager &info_man
             parent_for = parent_for->getParentFor();
             break;
         }
-        parent_for = parent_for->getParentFor();
         loop_var2for[var] = parent_for;
+        parent_for = parent_for->getParentFor();
     }
 
     vector<string> loop_vars;
@@ -237,27 +237,25 @@ void postProcess(shared_ptr<ir::Block> outer_block, IVInfoManager &info_manager,
 }
 
 // TODO: Only support one loop var with coefficient 1 in each array index.
-void extract(shared_ptr<ir::Block> outer_block, Forest expr_trees, int avn_cnt) {
+void extract(shared_ptr<ir::Block> outer_block, ir::Block assignment_block, int avn_cnt) {
+    // Build ExprTree for each assignment.
+    Forest expr_trees;
+    for (const auto &stmt : assignment_block) {
+        auto assign = ir::llvm_pointer_cast<ir::Assignment>(stmt);
+        assert(assign);
+        expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
+    }
     vector<string> op_list = {"+", "-", "*", "/", "call"}; // TODO: support sin and cos.
     std::map<string, vector<TreeNodeVec>> candidates;
     IVInfoManager info_manager;
     int iv_cnt = 0;
-    ir::ForStmt *parent_for = nullptr;
+    info_manager.setParentFor(assignment_block.getParentFor());
     for (auto op : op_list) {
         candidates[op] = vector<TreeNodeVec>();
     }
 
     for (auto tree : expr_trees) {
         tree->hoist();
-        if (!parent_for) { // set parent ForStmt.
-            for (auto node : *tree) {
-                if (auto arr_ref = llvm_pointer_cast<ArrayRef>(node->getExpression())) {
-                    parent_for = arr_ref->getParentLoop();
-                    info_manager.setParentFor(parent_for);
-                    break;
-                }
-            }
-        }
 #ifdef DEBUG
         llvm::outs() << "--------printTree--------\n";
         tree->printTree();
