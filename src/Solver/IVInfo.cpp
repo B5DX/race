@@ -1,9 +1,8 @@
 #include "Solver/IVInfo.h"
 #include <iostream>
-#include <queue>
 #include <map>
+#include <queue>
 #include <set>
-using Disp = IVInfo::Disp;
 
 void IVInfoManager::registerNativeArray(const shared_ptr<ir::ExprTree> &tree) {
     // Native array's operands, disp, index_vars are empty.
@@ -14,198 +13,135 @@ void IVInfoManager::registerNativeArray(const shared_ptr<ir::ExprTree> &tree) {
             if (!hasIVInfo(array_name)) {
                 IVInfo iv_info;
                 iv_info.referenced_cnt = 0;
-                std::map<string, int> disp = arr_ref->getDisp();
-                for (const auto &d : disp) {
-                    iv_info.lower_bounds[d.first] = d.second;
-                    iv_info.upper_bounds[d.first] = d.second;
+                for (const auto &s : arr_ref->getSubscripts()) {
+                    if (s.isAipb()) {
+                        iv_info.index_vars.push_back(s.getI()->to_string());
+                    }
                 }
                 iv_info_map[array_name] = iv_info;
-            } else {
-                auto &info = iv_info_map[array_name];
-                auto disp = arr_ref->getDisp();
-                for (const auto &d : disp) {
-                    info.lower_bounds[d.first] = std::min(info.lower_bounds[d.first], d.second);
-                    info.upper_bounds[d.first] = std::max(info.upper_bounds[d.first], d.second);
-                }
             }
         } else if (ir::llvm_isa<ir::DeclRef>(expr) || ir::llvm_isa<ir::Number>(expr)) { // DeclRef or Number
             auto name = expr->to_string();
             if (!hasIVInfo(name)) {
-                IVInfo iv_info;
-                iv_info.referenced_cnt = 0;
-                iv_info_map[name] = iv_info;
+                iv_info_map[name] = IVInfo();
             }
         }
         // None of the above, which means it's an sin or cos in CallOp, do nothing.
     }
 }
 
-void IVInfoManager::registerArray(string array, shared_ptr<ir::ExprTreeNode> sub_expr_node) {
+void IVInfoManager::registerArray(string array, shared_ptr<DeltaNode> delta_node) {
     if (hasIVInfo(array))
         return;
 
+    using Subs = vector<ir::Subscript>;
     IVInfo info;
-    info.referenced_cnt = 0;
-    info.op = sub_expr_node->getParent()->to_string();
-    auto sub_expr = sub_expr_node->getExpression();
-
-    info.disp.push_back(vector<std::pair<string, int>>());
-    std::map<string, int> lb, ub, delta;
-    // Set operand, operand's reference count. Get data for disp, upper and lower bounds.
-    if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(sub_expr)) {
-        lb = iv_info_map[arr_ref->getArrayName()->to_string()].lower_bounds;
-        ub = iv_info_map[arr_ref->getArrayName()->to_string()].upper_bounds;
-        iv_info_map[arr_ref->getArrayName()->to_string()].referenced_cnt++;
-        info.operands.push_back(arr_ref->getArrayName()->to_string());
-        delta = arr_ref->getDisp();
-    } else {
-        lb = iv_info_map[sub_expr->to_string()].lower_bounds;
-        ub = iv_info_map[sub_expr->to_string()].upper_bounds;
-        iv_info_map[sub_expr->to_string()].referenced_cnt++;
-        info.operands.push_back(sub_expr->to_string());
-    }
-    for (const auto &d : lb) {
-        info.lower_bounds[d.first] = d.second;
-        info.upper_bounds[d.first] = ub[d.first];
-    }
-
-    // Set disp equal to operand's indices.
-    // e.g. registerArray(T, sin(A[j][i+1]) will register T[j][i] = sin(A[j][i]), instead of T[j][i] = sin(A[j][i+1]).
-    if (parent_for) { // Empty parent_for means there are only DeclRefs or Numbers in all trees, no ArrayRef.
-        const auto &loop_vars = parent_for->getLoopVars();
-        for (auto var : loop_vars) {
-            bool used_var = false;
-            if (delta.find(var->to_string()) != delta.end()) {
-                info.disp[0].push_back({var->to_string(), 0});
-                used_var = true;
-            }
-            if (used_var) {
-                info.index_vars.push_back(var->to_string());
-            }
-        }
-    }
-    iv_info_map[array] = info;
-}
-
-void IVInfoManager::registerArray(string array, shared_ptr<ir::ExprTreeNode> l_expr_node, shared_ptr<ir::ExprTreeNode> r_expr_node) {
-    if (hasIVInfo(array))
-        return;
-
-    IVInfo info;
+    shared_ptr<ir::ExprTreeNode> l_expr_node = delta_node->getLeft();
+    shared_ptr<ir::ExprTreeNode> r_expr_node = delta_node->getRight();
     info.op = l_expr_node->getParent()->to_string();
     info.referenced_cnt = 0;
-    info.disp.push_back(vector<std::pair<string, int>>());
-    info.disp.push_back(vector<std::pair<string, int>>());
+    info.subs.push_back(Subs());
+    info.subs.push_back(Subs());
     auto l_expr = l_expr_node->getExpression();
     auto r_expr = r_expr_node->getExpression();
 
-    std::map<string, int> l_ub, l_lb, r_ub, r_lb;
-    std::map<string, int> l_delta, r_delta;
-    vector<std::pair<string, int>> l_disp, r_disp;
-    // Set operands, left and right's reference count. Get data for disp, upper and lower bounds.
+    Subs l_subs, r_subs;
+    std::map<string, int> shift_coef;
+    std::map<string, rational> l_firstIdxOffset, r_firstIdxOffset;
+    // Set operands, left and right's reference count. Get data for subsequent processing.
     if (auto l_arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(l_expr)) {
-        auto &l_info = iv_info_map[l_arr_ref->getArrayName()->to_string()];
-        l_ub = l_info.upper_bounds;
-        l_lb = l_info.lower_bounds;
-        l_delta = l_arr_ref->getDisp();
-        l_disp = l_arr_ref->getOrderedDisp();
-        l_info.referenced_cnt++;
-        info.operands.push_back(l_arr_ref->getArrayName()->to_string());
+        l_firstIdxOffset = l_arr_ref->getFirstIdxOffset();
+        string l_arr_name = l_arr_ref->getArrayName()->to_string();
+        l_subs = l_arr_ref->getSubscripts();
+        iv_info_map[l_arr_name].referenced_cnt++;
+        iv_info_map[l_arr_name].parent.push_back(array);
+        info.operands.push_back(l_arr_name);
     } else {
-        info.operands.push_back(l_expr->to_string());
-        iv_info_map[l_expr->to_string()].referenced_cnt++;
+        string l_arr_name = l_expr->to_string();
+        iv_info_map[l_arr_name].referenced_cnt++;
+        iv_info_map[l_arr_name].parent.push_back(array);
+        info.operands.push_back(l_arr_name);
     }
     if (auto r_arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(r_expr)) {
-        auto &r_info = iv_info_map[r_arr_ref->getArrayName()->to_string()];
-        r_ub = r_info.upper_bounds;
-        r_lb = r_info.lower_bounds;
-        r_delta = r_arr_ref->getDisp();
-        r_disp = r_arr_ref->getOrderedDisp();
-        r_info.referenced_cnt++;
-        info.operands.push_back(r_arr_ref->getArrayName()->to_string());
+        r_firstIdxOffset = r_arr_ref->getFirstIdxOffset();
+        string r_arr_name = r_arr_ref->getArrayName()->to_string();
+        r_subs = r_arr_ref->getSubscripts();
+        iv_info_map[r_arr_name].referenced_cnt++;
+        iv_info_map[r_arr_name].parent.push_back(array);
+        info.operands.push_back(r_arr_name);
     } else {
-        info.operands.push_back(r_expr->to_string());
-        iv_info_map[r_expr->to_string()].referenced_cnt++;
+        string r_arr_name = r_expr->to_string();
+        iv_info_map[r_arr_name].referenced_cnt++;
+        iv_info_map[r_arr_name].parent.push_back(array);
+        info.operands.push_back(r_arr_name);
     }
 
-    // Set disp
-    // Merge disp and shift to middle. Shifted delta is written to l_delta and r_delta.
-    // e.g. registerArray(T, A[j][i+1]+B[j][i+3]) will register T[j][i]=A[j][i-1]+B[j][i+1], instead of T[j][i]=A[j][i]+B[j][i+2] etc.
-    for (auto &d : l_delta) {
-        if (r_delta.find(d.first) == r_delta.end()) {
-            d.second = 0;
+    // Set shift_coef
+    for (const auto &l_str_off : l_firstIdxOffset) {
+        if (r_firstIdxOffset.find(l_str_off.first) == r_firstIdxOffset.end()) {
+            shift_coef[l_str_off.first] = l_str_off.second.numerator() / l_str_off.second.denominator();
         } else {
-            int shift = (r_delta[d.first] + l_delta[d.first]) / 2;
-            d.second -= shift;
-            r_delta[d.first] -= shift;
+            const auto &r_offset = r_firstIdxOffset[l_str_off.first];
+            rational mid_offset = (l_str_off.second + r_offset) / 2;
+            shift_coef[l_str_off.first] = mid_offset.numerator() / mid_offset.denominator();
         }
     }
-    for (auto &d : r_delta) {
-        if (l_delta.find(d.first) == l_delta.end()) {
-            d.second = 0;
+    for (const auto &r_str_off : r_firstIdxOffset) {
+        if (l_firstIdxOffset.find(r_str_off.first) == l_firstIdxOffset.end()) {
+            shift_coef[r_str_off.first] = r_str_off.second.numerator() / r_str_off.second.denominator();
         }
     }
+    // Set the subscripts of represent expression.
+    for (auto &l_sub : l_subs) {
+        if (l_sub.isAipb()) {
+            l_sub.setB(l_sub.getB() - shift_coef[l_sub.getI()->to_string()] * l_sub.getA());
+        }
+    }
+    for (auto &r_sub : r_subs) {
+        if (r_sub.isAipb()) {
+            r_sub.setB(r_sub.getB() - shift_coef[r_sub.getI()->to_string()] * r_sub.getA());
+        }
+    }
+    info.subs[0] = l_subs;
+    info.subs[1] = r_subs;
+
     if (parent_for) { // Empty parent_for means there are only DeclRefs or Numbers in all trees, no ArrayRef.
         const auto &loop_vars = parent_for->getLoopVars();
         for (auto var : loop_vars) {
-            bool used_var = false;
-            if (l_delta.find(var->to_string()) != l_delta.end() || r_delta.find(var->to_string()) != r_delta.end()) {
+            if (l_firstIdxOffset.find(var->to_string()) != l_firstIdxOffset.end() || r_firstIdxOffset.find(var->to_string()) != r_firstIdxOffset.end()) {
                 info.index_vars.push_back(var->to_string());
             }
         }
-        for (const auto &d : l_disp) {
-            info.disp[0].push_back({d.first, l_delta[d.first]});
-        }
-        for (const auto &d : r_disp) {
-            info.disp[1].push_back({d.first, r_delta[d.first]});
-        }
     }
 
-    // Set upper and lower bounds
-    std::set<string> union_dims;
-    for (const auto &d : l_ub) {
-        union_dims.insert(d.first);
-    }
-    for (const auto &d : r_ub) {
-        union_dims.insert(d.first);
-    }
-    for (auto it = union_dims.begin(); it != union_dims.end(); ++it) {
-        int max_v = -1e9;
-        int min_v = 1e9;
-        if (l_lb.find(*it) != l_lb.end()) {
-            max_v = std::max(max_v, l_lb[*it] - l_delta[*it]);
-        }
-        if (r_lb.find(*it) != r_lb.end()) {
-            max_v = std::max(max_v, r_lb[*it] - r_delta[*it]);
-        }
-        if (l_ub.find(*it) != l_ub.end()) {
-            min_v = std::min(min_v, l_ub[*it] - l_delta[*it]);
-        }
-        if (r_ub.find(*it) != r_ub.end()) {
-            min_v = std::min(min_v, r_ub[*it] - r_delta[*it]);
-        }
-        info.lower_bounds[*it] = max_v;
-        info.upper_bounds[*it] = min_v;
-    }
     iv_info_map[array] = info;
 }
 
 void IVInfoManager::registerUsage(shared_ptr<ir::ExprTreeNode> expr_node) {
     string array = expr_node->to_string();
-    if (!hasIVInfo(array)) {
-        throw std::runtime_error("Array not registered but used.");
+    if (!hasIVInfo(array) || isNativeArray(array)) {
+        std::cout << "Register Usage Error: " << array << std::endl;
+        exit(0);
     }
     auto &info = iv_info_map[array];
     auto cur_expr = expr_node->getExpression();
     if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(cur_expr)) {
-        auto delta = arr_ref->getDisp();
+        auto subs = arr_ref->getSubscripts();
         if (info.used_max_delta.empty()) { // First time to registerUsage for this array.
-            info.used_max_delta = delta;
-            info.used_min_delta = delta;
+            for (const auto &sub : subs) {
+                if (sub.isAipb()) {
+                    string idx_str = sub.getI()->to_string();
+                    info.used_max_delta[idx_str] = sub.getB();
+                    info.used_min_delta[idx_str] = sub.getB();
+                }
+            }
         } else {
-            for (const auto &d : delta) {
-                info.used_max_delta[d.first] = std::max(info.used_max_delta[d.first], d.second);
-                info.used_min_delta[d.first] = std::min(info.used_min_delta[d.first], d.second);
+            for (const auto &sub : subs) {
+                if (sub.isAipb()) {
+                    string idx_str = sub.getI()->to_string();
+                    info.used_max_delta[idx_str] = std::max(info.used_max_delta[idx_str], sub.getB());
+                    info.used_min_delta[idx_str] = std::min(info.used_min_delta[idx_str], sub.getB());
+                }
             }
         }
     } else {
@@ -213,179 +149,759 @@ void IVInfoManager::registerUsage(shared_ptr<ir::ExprTreeNode> expr_node) {
     }
 }
 
-// std::map<string, int> getShiftedDelta(const std::map<string, int> &cur_disp, const std::map<string, int> &base) {
-//     std::map<string, int> res;
-//     for (const auto &d : cur_disp) {
-//         if (base.find(d.first) != base.end()) {
-//             res[d.first] = d.second - base.at(d.first);
-//         }
-//     }
-//     return res;
-// }
-
-shared_ptr<ir::Expression> IVInfoManager::getRefExpr(string array, shared_ptr<ir::ExprTreeNode> l_expr_node, shared_ptr<ir::ExprTreeNode> r_expr_node) {
+shared_ptr<ir::Expression> IVInfoManager::getRefExpr(string array, shared_ptr<DeltaNode> delta_node) {
     if (!hasIVInfo(array)) {
-        std::cout << array << ":" << l_expr_node->to_string() << ", " << r_expr_node->to_string() << std::endl;
-        throw std::runtime_error("ir::ArrayRef not registered.");
+        std::cout << array << "is not registered but getRefExpr is called." << std::endl;
+        exit(0);
     }
+    shared_ptr<ir::ExprTreeNode> l_expr_node = delta_node->getLeft();
+    shared_ptr<ir::ExprTreeNode> r_expr_node = delta_node->getRight();
     auto l_expr = l_expr_node->getExpression();
     auto r_expr = r_expr_node->getExpression();
     std::map<string, int> cur_expr_delta;
     auto &info = iv_info_map[array];
-    if (auto l_arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(l_expr)) {
-        auto delta = l_arr_ref->getDisp();
-        for (const auto &d : info.disp[0]) {
-            cur_expr_delta[d.first] = delta[d.first] - d.second;
+    auto exprs = {l_expr, r_expr};
+    for (size_t i = 0; i < 2; i++) {
+        auto expr = exprs.begin()[i];
+        if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(expr)) {
+            auto child_arr_sub = arr_ref->getFirstIdxOffset();
+            for (const auto &this_sub : info.subs[i]) {
+                if (this_sub.isAipb()) {
+                    string idx_str = this_sub.getI()->to_string();
+                    if (cur_expr_delta.find(idx_str) == cur_expr_delta.end()) {
+                        auto delta = child_arr_sub[idx_str] - rational(this_sub.getB(), this_sub.getA());
+                        if (delta.denominator() != 1) {
+                            std::cout << "Error: getRefExpr: " << array << std::endl;
+                            exit(0);
+                        }
+                        cur_expr_delta[idx_str] = delta.numerator();
+                    }
+                }
+            }
         }
     }
-    if (auto r_arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(r_expr)) {
-        auto delta = r_arr_ref->getDisp();
-        for (const auto &d : info.disp[1]) {
-            cur_expr_delta[d.first] = delta[d.first] - d.second;
-        }
-    }
+
     if (cur_expr_delta.empty()) { // No ArrayRef in l_expr or r_expr.
-        return std::make_shared<ir::DeclRef>(array);    
+        return std::make_shared<ir::DeclRef>(array);
     } else {
-        vector<std::pair<string, int>> disp;
-        for (const auto &idx : iv_info_map[array].index_vars) {
-            disp.push_back({idx, cur_expr_delta[idx]});
-            // *The following code may incur errors when compressing iv_array. Since the reference here may merged into another iv_array and may not be used in the final expression.
-            // if (info.used_max_delta.find(idx) == info.used_max_delta.end()) { // First time to getRefExpr for this array.
-            //     info.used_max_delta[idx] = cur_expr_delta[idx];
-            //     info.used_min_delta[idx] = cur_expr_delta[idx];
-            // } else { // Update used_max_delta and used_min_delta.
-            //     info.used_max_delta[idx] = std::max(info.used_max_delta[idx], cur_expr_delta[idx]);
-            //     info.used_min_delta[idx] = std::min(info.used_min_delta[idx], cur_expr_delta[idx]);
-            // }
+        vector<ir::Subscript> subs;
+        for (const auto &idx_str : iv_info_map[array].index_vars) {
+            subs.push_back(
+                ir::Subscript(ir::Subscript::aipb, 1, make_shared<ir::DeclRef>(idx_str), cur_expr_delta[idx_str]));
         }
-        return std::make_shared<ir::ArrayRef>(array, disp, parent_for);
+        return std::make_shared<ir::ArrayRef>(array, subs, parent_for);
     }
 }
 
-shared_ptr<ir::Expression> IVInfoManager::getConstructRHS(const string &array, std::map<string, int> shift_disp) {
-    if (!hasIVInfo(array)) {
-        throw std::runtime_error("ir::ArrayRef not registered.");
+vector<string> IVInfoManager::getTopologicalOrder(std::set<string> explicit_iv) {
+    vector<string> res;
+    std::map<string, bool> visited;
+    for (const auto &iv : iv_info_map) {
+        visited[iv.first] = false;
     }
-    if (isNativeArray(array)) {
-        throw std::runtime_error("Native array has no construct expression.");
-    }
-    auto info = iv_info_map[array];
-    shared_ptr<ir::Expression> l_expr, r_expr;
-    if (this->isNativeArray(info.operands[0])) { // Recursive base: left operand is a native array.
-        if (info.disp[0].empty()) { // l_expr is a DeclRef or Number.
-            l_expr = std::make_shared<ir::DeclRef>(info.operands[0]);
-        } else { // l_expr is an ArrayRef.
-            if (shift_disp.empty()) { // No shift.
-                l_expr = std::make_shared<ir::ArrayRef>(info.operands[0], info.disp[0], parent_for);
-            } else { // Shift left operand by shift_disp.
-                auto disp = info.disp[0];
-                for (auto &d : disp) {
-                    if (shift_disp.find(d.first) != shift_disp.end()) {
-                        d.second += shift_disp[d.first];
-                    }
-                }
-                l_expr = std::make_shared<ir::ArrayRef>(info.operands[0], disp, parent_for);
+    std::function<bool(string)> isValid = [&](string iv) {
+        if (isNativeArray(iv) || visited[iv]) {
+            return false;
+        }
+        return true;
+    };
+
+    std::function<void(string)> dfs = [&](string cur) {
+        visited[cur] = true;
+        for (string next : iv_info_map[cur].operands) {
+            if (isValid(next)) {
+                dfs(next);
             }
         }
-    } else { // Recursive step: left operand is an intermediate variable.
-        if (shift_disp.empty()) { // No shift.
-            std::map<string, int> l_expr_shift;
-            for (const auto &d : info.disp[0]) {
-                l_expr_shift[d.first] = d.second;
+        if (explicit_iv.empty()) { // If explicit_iv is empty, all the intermediate variables are retained.
+            res.push_back(cur);
+        } else { // If explicit_iv is not empty, only push the explicit ivs.
+            if (explicit_iv.find(cur) != explicit_iv.end()) {
+                res.push_back(cur);
             }
-            l_expr = getConstructRHS(info.operands[0], l_expr_shift);
-        } else { // Shift left operand by shift_disp.
-            auto l_expr_shift = shift_disp;
-            for (auto &d : info.disp[0]) {
-                if (l_expr_shift.find(d.first) != l_expr_shift.end()) {
-                    l_expr_shift[d.first] += d.second;
+        }
+    };
+    for (auto str_info : iv_info_map) {
+        if (isValid(str_info.first)) {
+            dfs(str_info.first);
+        }
+    }
+    std::reverse(res.begin(), res.end());
+    return res;
+}
+
+std::map<string, vector<string>> IVInfoManager::getNewOperandsMap(std::set<string> explicit_iv) {
+    std::map<string, vector<string>> new_operands_map;
+    for (const auto &cur_iv_str : explicit_iv) {
+        auto cur_info = iv_info_map[cur_iv_str];
+        std::queue<string> q;
+        for (const auto &operand : cur_info.operands) {
+            q.push(operand);
+        }
+        while (!q.empty()) {
+            auto top = q.front();
+            q.pop();
+            if (isNativeArray(top)) {
+                continue;
+            }
+            if (explicit_iv.find(top) != explicit_iv.end()) {
+                new_operands_map[cur_iv_str].push_back(top);
+            } else { // If top is implicit, expand its operands. Native array has no operands so it will push nothing.
+                auto top_info = iv_info_map[top];
+                for (const auto &operand : top_info.operands) {
+                    q.push(operand);
+                }
+            }
+        }
+    }
+    // Print
+    // for (const auto &iter : new_operands_map) {
+    //     std::cout << "New Operands of " << iter.first << ": ";
+    //     for (const auto &operand : iter.second) {
+    //         std::cout << operand << ", ";
+    //     }
+    //     std::cout << std::endl;
+    // }
+    return new_operands_map;
+}
+
+void IVInfoManager::buildRangeCircleGraph(std::set<string> explicit_iv) {
+    // Recursively convey the range information from the highest level to the lowest level.
+    // ! explicit_iv should not be passed to this function, since we need to convey the range information to all intermediate variables.
+    auto topo_order = this->getTopologicalOrder();
+    for (auto iter = topo_order.begin(); iter < topo_order.end(); iter++) {
+        // Convey the range information from cur_iv to its operands.
+        const auto &cur_iv_str = *iter;
+        const auto &cur_iv = iv_info_map[cur_iv_str];
+        for (size_t idx = 0; idx < cur_iv.operands.size(); idx++) {
+            const auto &operand = cur_iv.operands[idx];
+            if (isNativeArray(operand)) {
+                continue;
+            }
+            // operand here is an intermediate variable. Its subscripts must all be "1*i+b" form.
+            // range information is conveyed from cur_iv to its operand.
+            auto &operand_info = iv_info_map[operand];
+            for (const auto &sub : cur_iv.subs[idx]) {
+                string idx_str = sub.getI()->to_string();
+                if (operand_info.used_max_delta.find(idx_str) == operand_info.used_max_delta.end()) {
+                    operand_info.used_min_delta[idx_str] = cur_iv.used_min_delta.at(idx_str) + sub.getB();
+                    operand_info.used_max_delta[idx_str] = cur_iv.used_max_delta.at(idx_str) + sub.getB();
                 } else {
-                    l_expr_shift[d.first] = d.second;
+                    operand_info.used_min_delta[idx_str] = std::min(operand_info.used_min_delta[idx_str],
+                                                                    cur_iv.used_min_delta.at(idx_str) + sub.getB());
+                    operand_info.used_max_delta[idx_str] = std::max(operand_info.used_max_delta[idx_str],
+                                                                    cur_iv.used_max_delta.at(idx_str) + sub.getB());
                 }
             }
-            l_expr = getConstructRHS(info.operands[0], l_expr_shift);
         }
+    }
+#ifdef DEBUG
+    this->printInfo();
+#endif
+
+    // Build range circle graph using the information conveyed above.
+    // The key of the map is the range, and the value is the intermediate variables with the same range.
+    std::map<
+        std::map<string, std::pair<int, int>>,
+        std::set<string>>
+        range_circle_map;
+
+    // Eliminate the omitted intermediate variables in the topo_order.
+    // So the range_circle_map only contains the explicit ivs.
+    topo_order = this->getTopologicalOrder(explicit_iv);
+    for (const auto &cur_iv_str : topo_order) {
+        auto cur_iv = iv_info_map[cur_iv_str];
+        std::map<string, std::pair<int, int>> cur_iv_range;
+        for (auto str_off : cur_iv.used_max_delta) {
+            cur_iv_range[str_off.first] = {
+                cur_iv.used_min_delta[str_off.first],
+                cur_iv.used_max_delta[str_off.first]};
+        }
+        range_circle_map[cur_iv_range].insert(cur_iv_str);
     }
 
-    // Do the same as above for r_expr
-    if (info.operands.size() > 1) { // binary operator
-        if (this->isNativeArray(info.operands[1])) {
-            if (info.disp[1].empty()) {
-                r_expr = std::make_shared<ir::DeclRef>(info.operands[1]);
-            } else {
-                if (shift_disp.empty()) {
-                    r_expr = std::make_shared<ir::ArrayRef>(info.operands[1], info.disp[1], parent_for);
+    // Get new operands information that expands the implicit ivs and omits invalid operands.
+    std::map<string, vector<string>> new_operands_map = this->getNewOperandsMap(explicit_iv);
+    std::map<string, std::set<string>> unique_new_operands_map;
+    for (const auto &iter : new_operands_map) {
+        unique_new_operands_map[iter.first] = std::set<string>(iter.second.begin(), iter.second.end());
+    }
+
+    // After setting the range circle map, we can get the range circle graph.
+    std::map<string, shared_ptr<RangeCircle>> iv2circle;
+    for (auto &range_ivs : range_circle_map) {
+        auto &packed_range = range_ivs.first;
+        auto &ivs = range_ivs.second;
+        auto range_circle = make_shared<RangeCircle>(ivs, packed_range);
+        for (auto iv : ivs) {
+            iv2circle[iv] = range_circle;
+            iv_info_map[iv].range_circle = range_circle;
+        }
+        this->range_circle_graph.addNode(range_circle);
+    }
+    for (const auto &iv_circle : iv2circle) {
+        auto &iv = iv_circle.first;
+        auto &circle = iv_circle.second;
+        for (const auto &operands : unique_new_operands_map[iv]) {
+            if (iv2circle[operands] != circle) {
+                this->range_circle_graph.addEdge(circle, iv2circle[operands]);
+            }
+        }
+    }
+    // Finish building range circle graph.
+#ifdef DEBUG
+    // print range circle graph
+    for (const auto &circle : this->range_circle_graph.getNodes()) {
+        std::cout << "Circle " << circle << ": ";
+        for (const auto &iv : circle->iv_arrays) {
+            std::cout << iv << ", ";
+        }
+        std::cout << std::endl;
+        std::cout << "Range-max-delta: ";
+        for (const auto &r : circle->used_max_delta) {
+            std::cout << "(" << r.first << ", " << r.second << "), ";
+        }
+        std::cout << std::endl;
+        std::cout << "Range-min-delta: ";
+        for (const auto &r : circle->used_min_delta) {
+            std::cout << "(" << r.first << ", " << r.second << "), ";
+        }
+        std::cout << std::endl;
+    }
+    for (const auto &source : this->range_circle_graph.getNodes()) {
+        for (const auto &sink : this->range_circle_graph.getNeighbors(source)) {
+            std::cout << "Edge: " << source << " -> " << sink << std::endl;
+        }
+    }
+#endif
+}
+
+// TODO: haven't support "--no-contraction" option.
+void IVInfoManager::arrayContraction(shared_ptr<ir::AVNBlock> avn_block, std::set<string> explicit_iv) {
+    this->buildRangeCircleGraph(explicit_iv);
+    // Skip the array reference independent loop.
+    // e.g. for t -> for j -> for i: T[j][i] = A[i+1] + B[j][i-1]. Loop t is independent.
+    // Then loop t should be put outside the optimization and generation process.
+    auto innermost_for = ir::llvm_pointer_cast<ir::ForStmt>(avn_block->getBlock()->front());
+    while (true) {
+        if (auto next = ir::llvm_pointer_cast<ir::ForStmt>(innermost_for->getBody()->front())) {
+            innermost_for = next;
+        } else {
+            break;
+        }
+    }
+    std::set<string> used_idx_vars;
+    auto collect_used_idx_vars = [&](shared_ptr<ir::ArrayRef> arf) {
+        for (const auto &sub : arf->getSubscripts()) {
+            if (sub.isAipb()) {
+                used_idx_vars.insert(sub.getI()->to_string());
+            }
+        }
+    };
+    for (auto &stmt : *innermost_for->getBody()) {
+        auto assign = ir::llvm_pointer_cast<ir::Assignment>(stmt);
+        if (!assign) {
+            continue;
+        }
+        auto lhs = assign->getLHS();
+        auto rhs = assign->getRHS();
+        ir::for_each_expr<ir::ArrayRef>(lhs, collect_used_idx_vars);
+        ir::for_each_expr<ir::ArrayRef>(rhs, collect_used_idx_vars);
+    }
+    // Skip the outermost loop that is not used by any array reference.
+    shared_ptr<ir::Block> skipped_block = avn_block->getBlock();
+    while (auto outer_for = ir::llvm_pointer_cast<ir::ForStmt>(skipped_block->front())) {
+        string idx_var = outer_for->getLoopVar()->to_string();
+        if (used_idx_vars.find(idx_var) == used_idx_vars.end()) {
+            skipped_block = outer_for->getBody();
+        } else {
+            break;
+        }
+    }
+    auto topo_order = this->range_circle_graph.getTopologicalOrder();
+    // Compute the index_mod and insert location.
+    for (auto &circle : topo_order) {
+        shared_ptr<ir::Block> cur_block = skipped_block;
+        // If contraction is disabled, keep all used index variables unchanged, 
+        // i.e. keep index_mod = 0, which is set when initialized.
+        if (!global_config.contraction) {
+            while (auto cur_for = ir::llvm_pointer_cast<ir::ForStmt>(cur_block->front())) {
+                string loop_var = cur_for->getLoopVar()->to_string();
+                if (circle->used_max_delta.find(loop_var) != circle->used_max_delta.end()) {
+                    circle->insert_loc = cur_block;
+                    break;
+                }
+                cur_block = cur_for->getBody();
+            }
+            if (!circle->insert_loc) {
+                circle->insert_loc = cur_block;
+            }
+            continue;
+        }
+
+        // If reach here, contraction is enabled.
+        // For each circle, try to enter each loop as inner as possible.
+        while (auto cur_for = ir::llvm_pointer_cast<ir::ForStmt>(cur_block->front())) {
+            string loop_var = cur_for->getLoopVar()->to_string();
+            // If vectorization needs to be utilized, the innermost loop should not be compressed.
+            if (global_config.vectorization) {
+                if (!ir::llvm_isa<ir::ForStmt>(cur_for->getBody()->front())) {
+                    // cur_for is the innermost loop.
+                    circle->index_mod[loop_var] = 0;
+                    circle->insert_loc = cur_block;
+                    break;
+                }
+            }
+            if (circle->used_max_delta.find(loop_var) != circle->used_max_delta.end()) {
+                // loop var is found, try to enter the loop.
+                int max_delta = circle->used_max_delta[loop_var];
+                int min_delta = circle->used_min_delta[loop_var];
+                if (max_delta == min_delta) {
+                    // matches this loop, enter it successfully.
+                    circle->index_mod[loop_var] = 1;
+                    cur_block = cur_for->getBody();
+                    if (cur_block->empty()) {
+                        std::cout << "Empty Block Error." << std::endl;
+                        exit(0);
+                    }
+                    continue;
                 } else {
-                    auto disp = info.disp[1];
-                    for (auto &d : disp) {
-                        if (shift_disp.find(d.first) != shift_disp.end()) {
-                            d.second += shift_disp[d.first];
+                    // circle is splited. Stop trying.
+                    circle->index_mod[loop_var] = max_delta - min_delta + 1;
+                    circle->insert_loc = cur_block;
+                    break;
+                }
+            } else {
+                // loop var is not found, dump code here.
+                circle->insert_loc = cur_block;
+                break;
+            }
+            cur_block = cur_for->getBody();
+            if (cur_block->empty()) {
+                std::cout << "Empty Block Error." << std::endl;
+                exit(0);
+            }
+        }
+        if (!circle->insert_loc) {
+            circle->insert_loc = cur_block;
+        }
+    }
+}
+
+void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, std::set<string> ori_used_iv, std::set<string> &explicit_iv) {
+    using std::pair;
+    using namespace ir;
+    // 1: Add profitable ivs.
+    for (const auto &str_info : iv_info_map) {
+        const auto &iv = str_info.first;
+        const auto &info = str_info.second;
+        bool flag = false;
+        // if (info.referenced_cnt > 2) flag = true;
+        if (info.op == "call") flag = true;
+        if (flag) {
+            explicit_iv.insert(iv);
+        }
+    }
+    // 2: All used_ivs must be explicit_iv
+    for (const auto &s : ori_used_iv) {
+        explicit_iv.insert(s);
+    }
+    // 3: Add large leaf counts ivs.
+    if (global_config.max_leaves < INT32_MAX) {
+        std::function<int(string)> getLeafCnt = [&](string iv) {
+            if (isNativeArray(iv)) {
+                return 1;
+            }
+            if (explicit_iv.find(iv) != explicit_iv.end()) {
+                return 1;
+            }
+            int res = 0;
+            for (const auto &operand : iv_info_map[iv].operands) {
+                res += getLeafCnt(operand);
+            }
+            return res;
+        };
+        for (const auto &str_info : iv_info_map) {
+            const auto &iv = str_info.first;
+            if (getLeafCnt(iv) > global_config.max_leaves) {
+                explicit_iv.insert(iv);
+            }
+        }
+    }
+    // 4: Erase the native arrays from explicit_iv.
+    for (auto iter = explicit_iv.begin(); iter != explicit_iv.end();) {
+        if (this->isNativeArray(*iter)) {
+            iter = explicit_iv.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+    if (global_config.contraction) {
+        // Begin Optimization 1:
+        // If an auxiliary array has only one parent (including the original loop's usage parent),
+        // it can be replaced by its representative expression.
+        // The parent should be the real parent given explicit_iv, instead of the original parent.
+        // So the current parent relation should be computed and stored in parent_of.
+        auto temp_operands_map = this->getNewOperandsMap(explicit_iv);
+        std::map<string, int> parent_size;
+        for (const auto &iter : temp_operands_map) {
+            for (const auto &operand : iter.second) {
+                parent_size[operand]++;
+            }
+        }
+        for (auto iter = explicit_iv.begin(); iter != explicit_iv.end();) {
+            string array = *iter;
+            auto &info = this->iv_info_map[array];
+            if (parent_size[array] == 1 && (ori_used_iv.find(array) == ori_used_iv.end())) {
+                iter = explicit_iv.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+        // End Optimization 1.
+    }
+
+    // Preprocess end.
+
+    this->arrayContraction(avn_block, explicit_iv);
+    const auto &range_circle_graph = this->getRangeCircleGraph();
+    const auto &range_circles = range_circle_graph.getTopologicalOrder();
+    // Use this map to bind each range circle with its corresponding for statement.
+    // This is used to avoid changing the structure of the original loop nest before finishing constructing all the precompute loops.
+    std::map<shared_ptr<RangeCircle>, shared_ptr<Statement>> circle2for;
+
+    // Use this map to bind each range circle with its corresponding pipeline block. This is used for the split loop case.
+    // The value of this map is a pair of the insert location and the pipeline block.
+    // New loops are added in aftermost steps and the perfect original loop structure is destroyed. So the insert location is recorded.
+    std::map<shared_ptr<RangeCircle>, pair<shared_ptr<Block>, shared_ptr<Statement>>> circle2pipeline;
+
+    auto avn_innermost_for = avn_block->getInnermostFor();
+    
+    for (const auto &range_circle : range_circles) {
+        auto insert_loc = range_circle->insert_loc;
+        auto generateAssignmentBlock = [&](shared_ptr<RangeCircle> range_circle,
+                                           ForStmt *parent_for, bool is_pipeline) -> shared_ptr<Block> {
+            auto block = std::make_shared<Block>(parent_for);
+            auto iv_topo_order = this->getTopologicalOrder(range_circle->iv_arrays);
+            for (auto riter = iv_topo_order.rbegin(); riter < iv_topo_order.rend(); riter++) {
+                const auto &iv_array = *riter;
+                shared_ptr<Assignment> assign;
+                shared_ptr<Expression> lhs, rhs;
+                lhs = this->getContractedConstructLHS(iv_array, parent_for, is_pipeline);
+                rhs = this->getContractedConstructRHS(iv_array, parent_for, explicit_iv, is_pipeline);
+                assign = std::make_shared<Assignment>(lhs, rhs);
+                block->push_back(assign);
+            }
+            return block;
+        };
+        auto insert_before_for_stmt = llvm_pointer_cast<ForStmt>(insert_loc->front());
+        if (!insert_before_for_stmt || range_circle->index_mod.empty()) { 
+            // Insert in the innermost loop || iv is DeclRef or Number (its index_mod will be empty).
+            // No loop structure is needed. Just generate the assignment block.
+            circle2for[range_circle] = generateAssignmentBlock(range_circle, insert_loc->getParentFor(), false);
+        } else {
+            // Record the candidate_for whose index variable is used by this range circle from innermost to outermost.
+            // i.e. the outmost loop is that last element of candidate_for.
+            vector<ForStmt*> candidate_for;
+            auto cur_for = avn_innermost_for.get();
+            unsigned int mod = 0;
+            while (cur_for) {
+                string idx_str = cur_for->getLoopVar()->to_string();
+                if (range_circle->index_mod.find(idx_str) != range_circle->index_mod.end()) {
+                    candidate_for.push_back(cur_for);
+                    // Only retain the outmost mod, which is the mod we only care about.
+                    // Because if outmost mod is 0, the inner loop's mod must be 0.
+                    // if > 1, the inner ones must be 0.
+                    // It's not possible that the outmost mod is 1.
+                    mod = range_circle->index_mod[idx_str]; 
+                }
+
+                if (cur_for == insert_before_for_stmt.get()) {
+                    break;
+                } else {
+                    cur_for = cur_for->getParentFor();
+                }
+            }
+            // If no candidate_for, it means that the loops' index after insert_loc has nothing to do with the range circle.
+            // So this range circle should be compressed to a scalar.
+            if (candidate_for.empty()) {
+                circle2for[range_circle] = generateAssignmentBlock(range_circle, insert_loc->getParentFor(), false);
+                continue;
+            }
+            // Else, generate the loop structure by the reverse order of candidate_for.
+            string outer_idx_str = candidate_for.back()->getLoopVar()->to_string();
+            if (mod == 1) {
+                std::cout << "Error: mod should not be 1." << std::endl;
+                exit(0);
+            }
+            pair<int, int> used_min_max = {range_circle->used_min_delta[outer_idx_str], range_circle->used_max_delta[outer_idx_str]};
+            pair<shared_ptr<Expression>, shared_ptr<Expression>> for_min_max = {candidate_for.back()->getBegin(), candidate_for.back()->getEnd()};
+            auto new_begin = buildExpression(for_min_max.first, used_min_max.first);
+            shared_ptr<Expression> new_end;
+            if (mod == 0) {
+                new_end = buildExpression(for_min_max.second, used_min_max.second);
+            } else { // mod == x, which means it should be splited (mod will not be 1 since the loop in the insert_loc bans the compression).
+                new_end = buildExpression(for_min_max.first, used_min_max.second - 1);
+            }
+            // Build the outmost loop new_for.
+            auto new_for = std::make_shared<ForStmt>(outer_idx_str, new_begin, new_end, insert_before_for_stmt->getParentFor());
+            circle2for[range_circle] = new_for;
+            
+            // Build the inner loop structure.
+            auto parent_for = new_for;
+            for (auto riter = candidate_for.rbegin() + 1; riter < candidate_for.rend(); riter++) {
+                auto for_stmt = *riter;
+                string idx_str = for_stmt->getLoopVar()->to_string();
+                used_min_max = {range_circle->used_min_delta[idx_str], range_circle->used_max_delta[idx_str]};
+                for_min_max = {for_stmt->getBegin(), for_stmt->getEnd()};
+                new_for = std::make_shared<ForStmt>(for_stmt->getLoopVar(), buildExpression(for_min_max.first, used_min_max.first),
+                                                    buildExpression(for_min_max.second, used_min_max.second), parent_for.get());
+                parent_for->getBody()->push_back(new_for);
+                parent_for = new_for;
+            }
+            parent_for->setBody(generateAssignmentBlock(range_circle, parent_for.get(), false));
+
+            // If mod > 1, generate pipeline block.
+            if (mod > 1) {
+                // Clone the body of the new for since the structure of pipeline block is the same as new_for's body.
+                // Only the innermost assignmens need to be changed.
+                new_for = llvm_pointer_cast<ForStmt>(circle2for[range_circle]);
+                auto inner_region = llvm_pointer_cast<Block>(new_for->getBody()->clone());
+                auto innermost_block = inner_region;
+                while (true) {
+                    if (auto inner_for = llvm_pointer_cast<ForStmt>(innermost_block->front())) {
+                        innermost_block = inner_for->getBody();
+                    } else {
+                        break;
+                    }
+                }
+                // Replace the innermost assignments with pipeline version.
+                auto new_body = generateAssignmentBlock(range_circle, parent_for.get(), true);
+                innermost_block->getBody().clear();
+                for (auto assign : *new_body) {
+                    innermost_block->push_back(assign);
+                }
+                // New loops are added in later steps and the perfect original loop structure is destroyed.
+                // So the pipeline insert location is recorded.
+                auto pipeline_insert_loc = llvm_pointer_cast<ForStmt>(insert_loc->getBody().front())->getBody();
+                if (auto for_stmt = llvm_pointer_cast<ForStmt>(inner_region->front())) {
+                    circle2pipeline[range_circle] = {pipeline_insert_loc, for_stmt};
+                } else {
+                    circle2pipeline[range_circle] = {pipeline_insert_loc, inner_region};
+                }
+            }
+        }
+    }
+    // Now all the precompute loops are constructed. We can insert them into the original loop nest.
+    auto insertBlock = [&](shared_ptr<Block> insert_loc, shared_ptr<Statement> stmt) -> void {
+        if (auto for_stmt = llvm_pointer_cast<ForStmt>(stmt)) {
+            insert_loc->push_front(for_stmt);
+            for_stmt->setParentFor(insert_loc->getParentFor(), false);
+        } else { // stmt is a Block of Assignment.
+            auto block = llvm_pointer_cast<Block>(stmt);
+            block->setParentFor(insert_loc->getParentFor(), false);
+            auto body = block->getBody();
+            for (auto riter = body.rbegin(); riter < body.rend(); riter++) {
+                insert_loc->push_front(*riter);
+            }
+        }
+    };
+    for (const auto &range_circle : range_circles) {
+        auto insert_loc = range_circle->insert_loc;
+        auto stmt = circle2for[range_circle];
+        insertBlock(insert_loc, stmt);
+
+        // If pipeline block is generated, insert it.
+        if (circle2pipeline.find(range_circle) != circle2pipeline.end()) {
+            auto pipeline_block = circle2pipeline[range_circle];
+            insertBlock(pipeline_block.first, pipeline_block.second);
+        }
+    }
+}
+
+shared_ptr<ir::Expression>
+IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *parent_for,
+                                         const std::map<string, int> &shift_disp, const std::set<string> &explicit_iv) {
+    if (!hasIVInfo(array) || isNativeArray(array)) {
+        exit(0);
+    }
+
+    const auto &info = iv_info_map[array];
+    vector<shared_ptr<ir::Expression>> res_operands = {nullptr, nullptr};
+    // Construct left and right operands. The results are stored in res_operands.
+    for (size_t i = 0; i < 2; i++) {
+        shared_ptr<ir::Expression> &expr = res_operands[i];
+        // Recursive base: left/right operand is a native array or used intermediate variable.
+        if (this->isNativeArray(info.operands[i]) || explicit_iv.find(info.operands[i]) != explicit_iv.end()) {
+            if (info.subs[i].empty()) { // expr is a DeclRef or Number.
+                expr = std::make_shared<ir::DeclRef>(info.operands[i]);
+            } else { // expr is an ArrayRef.
+                // Firstly, set the correct subscripts of the represent expression of the operand.
+                vector<ir::Subscript> res_subs;
+                if (shift_disp.empty()) { // No shift.
+                    res_subs = info.subs[i];
+                } else { // Shift left operand by shift_disp.
+                    auto subs = info.subs[i];
+                    for (auto &s : subs) {
+                        if (s.getI()) {
+                            string idx_str = s.getI()->to_string();
+                            if (shift_disp.find(idx_str) != shift_disp.end()) {
+                                s.setB(s.getB() + shift_disp.at(idx_str) * s.getA());
+                            }
                         }
                     }
-                    r_expr = std::make_shared<ir::ArrayRef>(info.operands[1], disp, parent_for);
+                    res_subs = subs;
                 }
-            }
-        } else {
-            if (shift_disp.empty()) {
-                std::map<string, int> r_expr_shift;
-                for (const auto &d : info.disp[1]) {
-                    r_expr_shift[d.first] = d.second;
-                }
-                r_expr = getConstructRHS(info.operands[1], r_expr_shift);
-            } else {
-                auto r_expr_shift = shift_disp;
-                for (auto &d : info.disp[1]) {
-                    if (r_expr_shift.find(d.first) != r_expr_shift.end()) {
-                        r_expr_shift[d.first] += d.second;
+                // Construct the represent expression.
+                if (this->isNativeArray(info.operands[i])) { // Native array. Just generate in the simply manner.
+                    expr = std::make_shared<ir::ArrayRef>(info.operands[i], res_subs, parent_for);
+                } else { // expr is an iv array, range_circle is needed to generate the expression.
+                    auto circle = iv_info_map[info.operands[i]].range_circle;
+                    if (global_config.contraction) {
+                        // Begin Optimization 2:
+                        // An auxiliary array can be replaced by a scalar if all of its parents are in the same circle with it.
+                        shared_ptr<RangeCircle> parent_circle = nullptr;
+                        bool flag = true;
+                        for (const string &parent : iv_info_map[info.operands[i]].parent) {
+                            if (iv_info_map[parent].range_circle != circle) {
+                                flag = false;
+                                break;
+                            }
+                        }
+                        // All parents are in the same circle with it.
+                        if (flag) {
+                            expr = std::make_shared<ir::DeclRef>(info.operands[i]);
+                            continue;
+                        }
+                        // Else, generate the expression normally.
+                        // End Optimization 2.
+                    }
+                    vector<shared_ptr<ir::Expression>> expr_subs;
+                    expr_subs = circle->getExprSubByCircle(res_subs);
+                    if (expr_subs.empty()) {
+                        expr = std::make_shared<ir::DeclRef>(info.operands[i]);
                     } else {
-                        r_expr_shift[d.first] = d.second;
+                        expr = std::make_shared<ir::ArrayRef>(info.operands[i], expr_subs, parent_for, true);
                     }
                 }
-                r_expr = getConstructRHS(info.operands[1], r_expr_shift);
+            }
+        } else {                      // Recursive step: left/right operand is an intermediate variable and is not explicit.
+            if (shift_disp.empty()) { // No shift.
+                std::map<string, int> expr_shift;
+                for (const auto &s : info.subs[i]) {
+                    if (!s.isAipb()) { // Since operand is an intermediate variable, all subs are "1*i+b" form.
+                        std::cout << "Error: getConstructRHS: " << array << std::endl;
+                        exit(0);
+                    }
+                    expr_shift[s.getI()->to_string()] = s.getB();
+                }
+                expr = getContractedConstructRHS(info.operands[i], parent_for, expr_shift, explicit_iv);
+            } else { // Shift left operand by shift_disp.
+                auto expr_shift = shift_disp;
+                for (auto &s : info.subs[i]) {
+                    if (!s.isAipb()) {
+                        std::cout << "Error: getConstructRHS: " << array << std::endl;
+                        exit(0);
+                    }
+                    string idx_str = s.getI()->to_string();
+                    if (expr_shift.find(idx_str) != expr_shift.end()) {
+                        expr_shift[idx_str] += s.getB();
+                    } else {
+                        expr_shift[idx_str] = s.getB();
+                    }
+                }
+                expr = getContractedConstructRHS(info.operands[i], parent_for, expr_shift, explicit_iv);
             }
         }
-        return ir::buildBinaryOp(info.op, l_expr, r_expr);
+    }
+    return ir::buildBinaryOp(info.op, res_operands[0], res_operands[1]);
+}
+
+shared_ptr<ir::Expression>
+IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *parent_for,
+                                         const std::set<string> &explicit_iv, bool is_pipeline) {
+    if (!hasIVInfo(array) || isNativeArray(array)) {
+        exit(0);
+    }
+    std::map<string, int> shift;
+    auto range_circle = iv_info_map[array].range_circle;
+    for (const auto &str_mod : range_circle->index_mod) {
+        if (str_mod.second == 1) { // mod == 1 means used_min == used_max. Shift may be needed.
+            // In this index, range_circle->used_min_delta and range_circle->used_max_delta are the same.
+            if (range_circle->used_min_delta[str_mod.first] != 0) { // Shift is needed.
+                shift[str_mod.first] = range_circle->used_min_delta[str_mod.first];
+            }
+        } else if (is_pipeline && str_mod.second > 1) {
+            shift[str_mod.first] = range_circle->used_max_delta[str_mod.first];
+        }
+    }
+    return getContractedConstructRHS(array, parent_for, shift, explicit_iv);
+}
+
+shared_ptr<ir::Expression>
+IVInfoManager::getContractedArf(const string &array, ir::ForStmt *parent_for,
+                                const std::map<string, int> &shift_disp) {
+    if (!hasIVInfo(array) || isNativeArray(array)) {
+        std::cout << "Error: getConstructLHS: " << array << std::endl;
+        exit(0);
+    }
+
+    auto &info = iv_info_map[array];
+    if (info.operands.empty()) {
+        return std::make_shared<ir::DeclRef>(array);
+    }
+
+    auto circle = info.range_circle;
+    if (global_config.contraction) {
+        // Begin Optimization 2:
+        shared_ptr<RangeCircle> parent_circle = nullptr;
+        // If parent is empty, it must be used by original loop.
+        if (!info.parent.empty()) {
+            bool if_opt = true;
+            for (const string &parent : info.parent) {
+                if (iv_info_map[parent].range_circle != circle) {
+                    if_opt = false;
+                    break;
+                }
+            }
+            // All parents are in the same circle with it.
+            if (if_opt) {
+                return std::make_shared<ir::DeclRef>(array);
+            }
+        }
+        // End Optimization 2.
+    }
+
+    vector<ir::Subscript> subs;
+    for (const auto &idx_str : info.index_vars) {
+        if (shift_disp.find(idx_str) != shift_disp.end()) {
+            subs.push_back(ir::Subscript(ir::Subscript::aipb, 1, make_shared<ir::DeclRef>(idx_str), shift_disp.at(idx_str)));
+        } else {
+            subs.push_back(ir::Subscript(ir::Subscript::aipb, 1, make_shared<ir::DeclRef>(idx_str), 0));
+        }
+    }
+    auto expr_subs = circle->getExprSubByCircle(subs);
+    if (expr_subs.empty()) {
+        return std::make_shared<ir::DeclRef>(array);
     } else {
-        return ir::buildUnaryOp(info.op, l_expr);
+        return std::make_shared<ir::ArrayRef>(array, expr_subs, parent_for, true);
     }
 }
 
-vector<string> IVInfoManager::IVTopologicalSort() {
-    vector<string> res;
-    std::queue<string> iv_queue;
-    std::map<string, int> iv_outdegree;
-    std::map<string, std::set<string>> iv_backedge;
-    for (auto arr : iv_info_map) {
-        iv_outdegree[arr.first] = 0;
-        std::set<string> unique_iv_expr(arr.second.operands.begin(), arr.second.operands.end());
-        for (auto refered_arr : unique_iv_expr) {
-            iv_backedge[refered_arr].insert(arr.first);
-            iv_outdegree[arr.first] += 1;
-        }
-        if (iv_outdegree[arr.first] == 0) {
-            iv_queue.push(arr.first);
-        }
-    }
-    while (!iv_queue.empty()) {
-        auto arr = iv_queue.front();
-        iv_queue.pop();
-        if (!isNativeArray(arr)) res.push_back(arr);
-        for (auto parent : iv_backedge[arr]) {
-            iv_outdegree[parent] -= 1;
-            if (iv_outdegree[parent] == 0) {
-                iv_queue.push(parent);
+shared_ptr<ir::Expression> IVInfoManager::getContractedConstructLHS(const string &array, ir::ForStmt *parent_for, bool is_pipeline) {
+    if (is_pipeline) {
+        std::map<string, int> shift;
+        auto range_circle = iv_info_map[array].range_circle;
+        for (const auto &str_mod : range_circle->index_mod) {
+            if (str_mod.second > 1) {
+                shift[str_mod.first] = range_circle->used_max_delta[str_mod.first];
+                break;
             }
         }
+        return getContractedArf(array, parent_for, shift);
+    } else {
+        return getContractedArf(array, parent_for, {});
     }
-    
-#ifdef DEBUG
-    for (auto i : res) {
-        cout << i << ", ";
-    }
-    cout << endl;
-#endif
-    return res;
 }
 
 void IVInfoManager::printInfo() {
@@ -402,44 +918,43 @@ void IVInfoManager::printInfo() {
             std::cout << arr.second.op << ": [";
             for (auto op : arr.second.operands)
                 std::cout << op << " ";
-            std::cout << "], disp: [";
-            for (auto d : arr.second.disp) {
+            std::cout << "], subs: [";
+            for (auto d : arr.second.subs) {
                 std::cout << "[";
                 for (auto i : d)
-                    std::cout << "(" << i.first << ", " << i.second << ") ";
+                    std::cout << "(" << i.to_string() << ") ";
                 std::cout << "] ";
             }
             std::cout << "], index_vars: [";
             for (auto i : arr.second.index_vars)
                 std::cout << i << " ";
             std::cout << "]" << std::endl;
-            std::cout << this->getConstructRHS(arr.first)->to_string() << std::endl;
+            // std::cout << this->getConstructRHS(arr.first)->to_string() << std::endl;
         }
     }
     std::cout << "Referenced Count: " << std::endl;
     for (auto arr : iv_info_map) {
         std::cout << arr.first << ": " << arr.second.referenced_cnt << std::endl;
     }
-    // print iv_info_map
-    std::cout << "Upper/Lower Bounds: " << std::endl;
+
+    // print used_max/min_delta
+    std::cout << "Used Min/Max Delta: " << std::endl;
     for (auto arr : iv_info_map) {
         std::cout << arr.first << ": [";
-        for (auto i : arr.second.lower_bounds)
+        for (auto i : arr.second.used_min_delta)
             std::cout << "(" << i.first << ", " << i.second << ") ";
         std::cout << "], [";
-        for (auto i : arr.second.upper_bounds)
+        for (auto i : arr.second.used_max_delta)
             std::cout << "(" << i.first << ", " << i.second << ") ";
         std::cout << "]" << std::endl;
     }
-    // print used_max/min_delta
-    std::cout << "Used Max/Min Delta: " << std::endl;
+
+    // print parent
+    std::cout << "Parent: " << std::endl;
     for (auto arr : iv_info_map) {
         std::cout << arr.first << ": [";
-        for (auto i : arr.second.used_max_delta)
-            std::cout << "(" << i.first << ", " << i.second << ") ";
-        std::cout << "], [";
-        for (auto i : arr.second.used_min_delta)
-            std::cout << "(" << i.first << ", " << i.second << ") ";
+        for (auto i : arr.second.parent)
+            std::cout << i << " ";
         std::cout << "]" << std::endl;
     }
     std::cout << "------------" << std::endl;

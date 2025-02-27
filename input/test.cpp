@@ -1,16 +1,16 @@
 #include <stdio.h>
 #include "tmp.h"
 
-#pragma avn begin
-#pragma avn end
+#pragma race begin
+#pragma race end
 int foo(int c) {
-    #pragma avn begin
+    #pragma race begin
     if (c > 10) {
         return c + 100;
     } else {
         return 94;
     }
-    #pragma avn end
+    #pragma race end
 }
 void bar(int x) {
     int a;
@@ -23,7 +23,7 @@ void bar(int x) {
 
 
 void test(int x, int y) {
-    #pragma avn begin
+    #pragma race begin
     int i = 0;
     int ims = 0, jms = 1;
     int a, b, c;
@@ -42,7 +42,7 @@ void test(int x, int y) {
         // a = b * c + a * b;
     }
     
-    #pragma avn end
+    #pragma race end
     #pragma omp parallel for
     for (int i = 0; i < 10; i++) {
         ;
@@ -51,9 +51,9 @@ void test(int x, int y) {
 }
 
 int main() {
-    #pragma avn begin
+    #pragma race begin
     // test(1, 2);
     func();
-    #pragma avn end
+    #pragma race end
     return 0;
 }

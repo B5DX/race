@@ -2,10 +2,13 @@
 #define IR_H
 #include "common.h"
 #include "llvm/Support/Casting.h"
+#include <boost/rational.hpp>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <set>
 #include <variant>
+#include <type_traits>
 
 namespace clang {
 class Expr;
@@ -27,6 +30,7 @@ class Statement {
 public:
     enum StmtKind {
         STMT_BLOCK,
+        STMT_AVN_BLOCK,
         STMT_FOR,
         STMT_ASSIGN,
     };
@@ -40,11 +44,13 @@ public:
 
     virtual ~Statement() {}
     virtual string to_string() const = 0;
+    virtual shared_ptr<Statement> clone() const = 0;
 };
 
 class Expression {
 public:
     enum ExprKind {
+        EXPR_COMMA,
         EXPR_OPERATOR,
         EXPR_UNARY,
         EXPR_NEGOP,
@@ -52,6 +58,8 @@ public:
         EXPR_COSOP,
         EXPR_UNARY_LAST,
         EXPR_BINARY,
+        EXPR_POWEROP,
+        EXPR_MODOP,
         EXPR_ADDOP,
         EXPR_SUBOP,
         EXPR_MULOP,
@@ -139,6 +147,10 @@ public:
         return expr->get_kind() == EXPR_NEGOP;
     }
 
+    virtual string to_string() const override {
+        return "(" + UnaryOp::to_string() + ")";
+    }
+
     virtual shared_ptr<Expression> clone() const override {
         return std::make_shared<NegOp>(expr->clone());
     }
@@ -193,6 +205,36 @@ public:
 
     static bool classof(const Expression *expr) {
         return expr->get_kind() >= EXPR_BINARY && expr->get_kind() < EXPR_BINARY_LAST;
+    }
+};
+
+class PowerOp : public BinaryOp {
+public:
+    PowerOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_POWEROP, "**", lhs, rhs) {}
+
+    virtual PRIORITIES get_priority() const override { return PRIORITY_CALL; }
+
+    static bool classof(const Expression *expr) {
+        return expr->get_kind() == EXPR_POWEROP;
+    }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<PowerOp>(lhs->clone(), rhs->clone());
+    }
+};
+
+class ModOp : public BinaryOp {
+public:
+    ModOp(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : BinaryOp(EXPR_MODOP, "%", lhs, rhs) {}
+
+    virtual PRIORITIES get_priority() const override { return PRIORITY_MUL; }
+
+    static bool classof(const Expression *expr) {
+        return expr->get_kind() == EXPR_MODOP;
+    }
+
+    virtual shared_ptr<Expression> clone() const override {
+        return std::make_shared<ModOp>(lhs->clone(), rhs->clone());
     }
 };
 
@@ -342,19 +384,54 @@ public:
 
 class Assignment : public Statement {
 protected:
-    shared_ptr<Expression> lhs;
-    shared_ptr<Expression> rhs;
+    shared_ptr<AssignOp> assign;
 
 public:
-    Assignment(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN), lhs(lhs), rhs(rhs) {}
+    Assignment(shared_ptr<Expression> lhs, shared_ptr<Expression> rhs) : Statement(STMT_ASSIGN) {
+        assign = std::make_shared<AssignOp>(lhs, rhs);
+    }
 
-    virtual string to_string() const override { return lhs->to_string() + " = " + rhs->to_string() + ";"; }
-    virtual shared_ptr<Expression> getLHS() const { return lhs; }
-    virtual shared_ptr<Expression> getRHS() const { return rhs; }
-    virtual void setLHS(shared_ptr<Expression> lhs) { this->lhs = lhs; }
-    virtual void setRHS(shared_ptr<Expression> rhs) { this->rhs = rhs; }
+    virtual string to_string() const override { return assign->getLHS()->to_string() + " = " + assign->getRHS()->to_string() + ";"; }
+    virtual shared_ptr<AssignOp> getAssign() const { return assign; }
+    virtual void setAssign(shared_ptr<AssignOp> assign) { this->assign = assign; }
+    virtual shared_ptr<Expression> getLHS() const { return assign->getLHS(); }
+    virtual shared_ptr<Expression> getRHS() const { return assign->getRHS(); }
+    virtual void setLHS(shared_ptr<Expression> lhs) { assign->setLHS(lhs); }
+    virtual void setRHS(shared_ptr<Expression> rhs) { assign->setRHS(rhs); }
 
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_ASSIGN; }
+    virtual shared_ptr<Statement> clone() const override {
+        return std::make_shared<Assignment>(assign->getLHS()->clone(), assign->getRHS()->clone());
+    }
+};
+
+class CommaExpr : public Expression {
+protected:
+    vector<shared_ptr<Expression>> exprs;
+
+public:
+    CommaExpr() : Expression(EXPR_COMMA) {}
+    CommaExpr(const vector<shared_ptr<Expression>> &exprs) : Expression(EXPR_COMMA), exprs(exprs) {}
+
+    virtual string to_string() const override {
+        string ret = exprs[0]->to_string();
+        for (size_t i = 1; i < exprs.size(); i++) {
+            ret += ", " + exprs[i]->to_string();
+        }
+        return ret;
+    }
+
+    static bool classof(const Expression *expr) {
+        return expr->get_kind() == EXPR_COMMA;
+    }
+
+    virtual shared_ptr<Expression> clone() const override {
+        vector<shared_ptr<Expression>> new_exprs;
+        for (const auto &expr : exprs) {
+            new_exprs.push_back(expr->clone());
+        }
+        return std::make_shared<CommaExpr>(new_exprs);
+    }
 };
 
 /**
@@ -409,6 +486,7 @@ public:
     }
 
     ForStmt *getParentFor() { return parent_for; }
+    void setParentFor(ForStmt *parent_for, bool recompute_arr_info = false);
     const vector<shared_ptr<Statement>> &getBody() const { return body; }
     vector<shared_ptr<Statement>> &getBody() { return body; }
 
@@ -433,6 +511,16 @@ public:
     const shared_ptr<Statement> &operator[](size_t idx) const { return body[idx]; }
     shared_ptr<Statement> &operator[](size_t idx) { return body[idx]; }
     bool empty() const { return body.empty(); }
+    void push_front(shared_ptr<Statement> stmt) { body.insert(body.begin(), stmt); }
+    shared_ptr<Statement> &front() { return body.front(); }
+    shared_ptr<Statement> &at(size_t idx) { return body.at(idx); }
+    virtual shared_ptr<Statement> clone() const override {
+        auto new_block = std::make_shared<Block>(this->parent_for);
+        for (const auto &stmt : this->body) {
+            new_block->push_back(stmt->clone());
+        }
+        return new_block;
+    }
 };
 
 class ForStmt : public Statement {
@@ -443,7 +531,7 @@ class ForStmt : public Statement {
 protected:
     shared_ptr<DeclRef> loop_var;
     shared_ptr<Expression> begin, end; // begin <= loop_var <= end
-    Block body;
+    shared_ptr<Block> body;
     /**
      * @brief The front element is the innermost index.
      * e.g. for(j...) {for(i...) {}} -> index_vars = {i, j}.
@@ -451,6 +539,7 @@ protected:
     vector<shared_ptr<DeclRef>> index_vars;
     ForStmt *parent_for;
     unsigned depth;
+    size_t indent_space = 4;
 
 public:
     /**
@@ -459,15 +548,18 @@ public:
      * And shared_from_this() can only be called after the object is constructed.
      */
     ForStmt(const clang::ForStmt *for_stmt, ForStmt *parent_for = nullptr);
-    ForStmt(string loop_var, shared_ptr<Expression> begin, shared_ptr<Expression> end, ForStmt *parent_for)
-        : Statement(STMT_FOR), begin(begin), end(end), body(this), parent_for(const_cast<ForStmt *>(parent_for)), depth(parent_for ? parent_for->depth + 1 : 0) {
-        this->loop_var = std::make_shared<DeclRef>(loop_var);
+    ForStmt(shared_ptr<DeclRef> loop_var, shared_ptr<Expression> begin, shared_ptr<Expression> end, ForStmt *parent_for)
+        : Statement(STMT_FOR), loop_var(loop_var), begin(begin), end(end), parent_for(const_cast<ForStmt *>(parent_for)), depth(parent_for ? parent_for->depth + 1 : 0) {
+        this->body = std::make_shared<Block>(this);
         index_vars.push_back(this->loop_var);
         if (parent_for) {
             const auto &parent_index_vars = parent_for->index_vars;
             index_vars.insert(index_vars.end(), parent_index_vars.begin(), parent_index_vars.end());
         }
     }
+    ForStmt(string loop_var, shared_ptr<Expression> begin, shared_ptr<Expression> end, ForStmt *parent_for)
+        : ForStmt(make_shared<DeclRef>(loop_var), begin, end, parent_for) {}
+
     static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_FOR; }
     virtual string to_string() const override;
 
@@ -478,21 +570,123 @@ public:
         return index_vars;
     }
 
-    void setParentFor(ForStmt *parent_for) { 
-        this->index_vars = {this->loop_var};
-        if (parent_for) {
-            const auto &parent_index_vars = parent_for->index_vars;
-            index_vars.insert(index_vars.end(), parent_index_vars.begin(), parent_index_vars.end());
-            this->depth = parent_for->depth + 1;
+    /**
+     * @brief the parent_for of the for statement and recompute the array information for
+     * the array reference in the for statement if recompute_arr_info is true.
+     */
+    void setParentFor(ForStmt *parent_for, bool recompute_arr_info = true);
+
+    /**
+     * @brief Recursively compute the array information (rpi and norm_idx) for the array reference in the for statement.
+     */
+    void recomputeArrayInfo();
+
+    void setDepth(unsigned depth) {
+        this->depth = depth;
+        for (auto &stmt : *body) {
+            if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+                inner_for->setDepth(this->depth + 1);
+            }
         }
-        this->parent_for = parent_for; 
+    }
+    void setIndentSpace(size_t space) {
+        indent_space = space;
+        for (auto &stmt : *body) {
+            if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+                inner_for->setIndentSpace(space);
+            }
+        }
     }
     ForStmt *getParentFor() { return parent_for; }
     shared_ptr<DeclRef> getLoopVar() const { return loop_var; }
     shared_ptr<Expression> getBegin() const { return begin; }
     shared_ptr<Expression> getEnd() const { return end; }
-    const Block &getBody() const { return body; }
-    Block &getBody() { return body; }
+    const shared_ptr<Block> &getBody() const { return body; }
+    shared_ptr<Block> getBody() { return body; }
+    void setBody(shared_ptr<Block> body) { this->body = body; }
+    virtual shared_ptr<Statement> clone() const override {
+        auto new_for = std::make_shared<ir::ForStmt>(loop_var, begin, end, parent_for);
+        new_for->setDepth(depth);
+        new_for->setIndentSpace(indent_space);
+        new_for->setBody(llvm_pointer_cast<Block>(body->clone()));
+        return new_for;
+    }
+};
+
+class AVNBlock : public Statement {
+protected:
+    vector<string> avn_var_decl;
+    vector<string> avn_var_alloc;
+    shared_ptr<Block> outer_block;
+
+public:
+    AVNBlock(shared_ptr<ForStmt> for_stmt) : Statement(STMT_AVN_BLOCK) {
+        outer_block = std::make_shared<Block>(nullptr);
+        outer_block->push_back(for_stmt);
+    }
+
+    void push_front(shared_ptr<Statement> for_stmt) {
+        auto &body = outer_block->getBody();
+        body.insert(body.begin(), for_stmt);
+    }
+
+    void addAVNVarDecl(const string &var) { avn_var_decl.push_back(var); }
+
+    void addAVNVarAlloc(const string &var) { avn_var_alloc.push_back(var); }
+
+    shared_ptr<Block> getBlock() { return outer_block; }
+
+    shared_ptr<ForStmt> getForStmt() {
+        return llvm_pointer_cast<ForStmt>(outer_block->getBody().front());
+    }
+
+    const vector<string> &getAVNVarDecl() const { return avn_var_decl; }
+
+    vector<string> &getAVNVarDecl() { return avn_var_decl; }
+
+    const vector<string> &getAVNVarAlloc() const { return avn_var_alloc; }
+
+    vector<string> &getAVNVarAlloc() { return avn_var_alloc; }
+
+    static bool classof(const Statement *stmt) { return stmt->get_kind() == STMT_AVN_BLOCK; }
+
+    virtual string to_string() const override {
+        return outer_block->to_string();
+    }
+
+    virtual shared_ptr<Statement> clone() const override {
+        auto new_avn_block = std::make_shared<AVNBlock>(llvm_pointer_cast<ForStmt>(outer_block->getBody().front()));
+        new_avn_block->avn_var_decl = avn_var_decl;
+        new_avn_block->avn_var_alloc = avn_var_alloc;
+        return new_avn_block;
+    }
+
+    shared_ptr<ForStmt> getInnermostFor() {
+        shared_ptr<ForStmt> cur_for = llvm_pointer_cast<ForStmt>(outer_block->getBody().back());
+        if (cur_for == nullptr) {
+            return nullptr;
+        }
+
+        while (auto next = llvm_pointer_cast<ForStmt>(cur_for->getBody()->getBody().back())) {
+            cur_for = next;
+        }
+        return cur_for;
+    }
+
+    // void setDepth(size_t depth) {
+    //     for (auto &stmt : outer_block->getBody()) {
+    //         if (auto for_stmt = llvm_pointer_cast<ForStmt>(stmt)) {
+    //             for_stmt->setDepth(depth);
+    //         }
+    //     }
+    // }
+    // void setIndentSpace(size_t indent) {
+    //     for (auto &stmt : outer_block->getBody()) {
+    //         if (auto for_stmt = llvm_pointer_cast<ForStmt>(stmt)) {
+    //             for_stmt->setIndentSpace(indent);
+    //         }
+    //     }
+    // }
 };
 
 // class ArrayIndex {
@@ -515,6 +709,84 @@ public:
 //     ArrayRef(shared_ptr<DeclRef> array, ) : Expression(EXPR_ARRAY_REF), array(array) {}
 // };
 
+// a * i + b
+class Subscript {
+public:
+    enum ExprForm {
+        aipb = 1,                // a * i + b
+        const_num = 10,          // like 1, 2, etc.
+        nonloop_index_var = 100, // like N, kte, etc.
+        invalid = 1000,          // i / 2
+    };
+
+private:
+    int a = 1;                       // coefficient of the loop variable i
+    shared_ptr<DeclRef> i = nullptr; // loop variable or loop-independent variable
+    int b = 0;                       // constant term
+    ExprForm expr_form;
+
+public:
+    Subscript(shared_ptr<ir::Expression> idx_expr, const std::set<string> &loop_vars);
+    Subscript(ExprForm form, const int &a, shared_ptr<DeclRef> i, const int &b) : a(a), i(i), b(b), expr_form(form) {}
+    Subscript(const Subscript &other) : a(other.a), i(other.i), b(other.b), expr_form(other.expr_form) {}
+
+    Subscript is_aipb_form(shared_ptr<ir::Expression> expr, const std::set<string> &loop_vars);
+    inline bool isValid() const { return expr_form != ExprForm::invalid; }
+    inline bool isLoopIndependent() const { return expr_form == ExprForm::const_num || expr_form == ExprForm::nonloop_index_var; }
+    inline bool isConstNum() const { return expr_form == ExprForm::const_num; }
+    inline bool isLoopIndependentVar() const { return expr_form == ExprForm::nonloop_index_var; }
+    inline bool isAipb() const { return expr_form == ExprForm::aipb; }
+    inline const ExprForm &getExprForm() const { return expr_form; }
+    inline int getA() const { return a; }
+    inline const shared_ptr<DeclRef> &getI() const { return i; }
+    inline shared_ptr<DeclRef> getI() { return i; }
+    inline int getB() const { return b; }
+    inline void setA(int a) { this->a = a; }
+    inline void setI(shared_ptr<DeclRef> i) { this->i = i; }
+    inline void setB(int b) { this->b = b; }
+    Subscript &operator=(const Subscript &other) {
+        a = other.a;
+        i = other.i;
+        b = other.b;
+        expr_form = other.expr_form;
+        return *this;
+    }
+    shared_ptr<Expression> generateExpr() const {
+        if (expr_form == ExprForm::aipb || expr_form == ExprForm::nonloop_index_var) {
+            if (a == 1 && b == 0) {
+                return i;
+            } else if (a == 1) {
+                if (b < 0)
+                    return std::make_shared<SubOp>(i, std::make_shared<Number>(-b));
+                else
+                    return std::make_shared<AddOp>(i, std::make_shared<Number>(b));
+            } else if (b == 0) {
+                return std::make_shared<MulOp>(std::make_shared<Number>(a), i);
+            } else {
+                if (b < 0)
+                    return std::make_shared<SubOp>(
+                        std::make_shared<MulOp>(std::make_shared<Number>(a), i),
+                        std::make_shared<Number>(-b));
+                else
+                    return std::make_shared<AddOp>(
+                        std::make_shared<MulOp>(std::make_shared<Number>(a), i),
+                        std::make_shared<Number>(b));
+            }
+        } else if (expr_form == ExprForm::const_num) {
+            return std::make_shared<Number>(b);
+        } else {
+            return nullptr;
+        }
+    }
+    string to_string() const {
+        auto expr = this->generateExpr();
+        if (expr)
+            return expr->to_string();
+        else
+            return "invalid";
+    }
+};
+
 class ArrayRef : public Expression {
 protected:
     shared_ptr<DeclRef> array;
@@ -522,22 +794,71 @@ protected:
      * @brief The front element is the innermost index. e.g. X[j][i+1] -> indices = {i+1, j}.
      */
     vector<shared_ptr<Expression>> indices;
+    vector<Subscript> norm_idx;
+    std::map<string, boost::rational<int>> firstIdxOffset;
     ForStmt *parent_loop;
+    size_t rpi = 0;
+
+    // Called in constructor to set norm_idx.
+    void computeNormIdx();
+    // Called in constructor after computeNormIdx() to set rpi.
+    void computeRPI();
 
 public:
-    ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices, ForStmt *parent_loop)
-        : Expression(EXPR_ARRAY_REF), array(array), indices(indices), parent_loop(parent_loop) {};
+    /**
+     * @param final is True if the array reference is no longer used by extraction, which is the situation
+     * when we generate the final code and the array's subscripts may have modulo operator.
+     */
+    ArrayRef(shared_ptr<DeclRef> array, const vector<shared_ptr<Expression>> &indices, ForStmt *parent_loop, bool final = false)
+        : Expression(EXPR_ARRAY_REF), array(array), indices(indices), parent_loop(parent_loop) {
+        if (!final) {
+            computeNormIdx();
+            computeRPI();
+        }
+    }
+    ArrayRef(const string &array_name, const vector<shared_ptr<Expression>> &indices, ForStmt *parent_loop, bool final = false)
+        : ArrayRef(std::make_shared<DeclRef>(array_name), indices, parent_loop, final) {}
+    ArrayRef(const string &array_name, const vector<Subscript> &subscripts, ForStmt *parent_loop);
+    /**
+     * @deprecated Use ArrayRef(const string &array_name, const vector<Subscript> &subscripts, ForStmt *parent_loop) instead.
+     */
     ArrayRef(const string &array_name, const vector<std::pair<string, int>> &indices, ForStmt *parent_loop);
 
     const vector<shared_ptr<Expression>> &getIndices() const { return indices; }
 
     shared_ptr<DeclRef> getArrayName() const { return array; }
 
+    /**
+     * @deprecated Use getSubscripts() instead.
+     */
     vector<std::pair<string, int>> getOrderedDisp() const;
-    
+
+    /**
+     * @deprecated Use getSubscripts() instead.
+     */
     std::map<string, int> getDisp() const;
 
-    void setParentLoop(ForStmt *parent_loop) { this->parent_loop = parent_loop; }
+    /**
+     * @brief Set the parent loop of the array reference and recompute the array information if recompute_arr_info is true.
+     */
+    void setParentLoop(ForStmt *parent_loop, bool recompute_arr_info = true) {
+        this->parent_loop = parent_loop;
+        if (recompute_arr_info)
+            recomputeArrayInfo();
+    }
+
+    void recomputeArrayInfo() {
+        computeNormIdx();
+        computeRPI();
+    }
+
+    const vector<Subscript> &getSubscripts() const {
+        return norm_idx;
+    }
+
+    size_t getRPI() const { return rpi; }
+
+    const std::map<string, boost::rational<int>> &getFirstIdxOffset() const { return firstIdxOffset; }
 
     ForStmt *getParentLoop() const { return parent_loop; }
 
@@ -565,7 +886,17 @@ public:
         for (const auto &idx : indices) {
             new_indices.push_back(idx->clone());
         }
-        return std::make_shared<ArrayRef>(array, new_indices, parent_loop);
+        // To avoid wrongly recompute the array information,
+        // we set final to true and copy the norm_idx and rpi of this.
+        auto res = std::make_shared<ArrayRef>(array, new_indices, parent_loop, true);
+        res->norm_idx = norm_idx;
+        res->rpi = rpi;
+        res->firstIdxOffset = firstIdxOffset;
+        return res;
+    }
+
+    bool isValid() {
+        return std::all_of(norm_idx.begin(), norm_idx.end(), [](const Subscript &idx) { return idx.isValid(); });
     }
 };
 
@@ -616,7 +947,8 @@ template <typename T>
 void for_each_expr(shared_ptr<ir::Expression> expr, std::function<void(shared_ptr<T>)> func) {
     if (auto ptr = llvm_pointer_cast<T>(expr)) {
         func(ptr);
-    } else if (auto bop = llvm_pointer_cast<ir::BinaryOp>(expr)) {
+    }
+    if (auto bop = llvm_pointer_cast<ir::BinaryOp>(expr)) {
         for_each_expr<T>(bop->getLHS(), func);
         for_each_expr<T>(bop->getRHS(), func);
     } else if (auto uop = llvm_pointer_cast<ir::UnaryOp>(expr)) {

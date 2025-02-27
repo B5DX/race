@@ -46,8 +46,16 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
         children.push_back(child);
     }
 
+    void addChild(shared_ptr<ExprTreeNode> child, size_t idx) {
+        children.insert(children.begin() + idx, child);
+    }
+
     void addChild(shared_ptr<ir::Expression> e) {
         children.push_back(make_shared<ExprTreeNode>(e, shared_from_this()));
+    }
+
+    void addChild(shared_ptr<ir::Expression> e, size_t idx) {
+        children.insert(children.begin() + idx, make_shared<ExprTreeNode>(e, shared_from_this()));
     }
 
     void setParent(weak_ptr<ExprTreeNode> p) { parent = p; }
@@ -89,7 +97,8 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
         }
     }
 
-    void eraseChild(shared_ptr<ExprTreeNode> child);
+    // Erase the child node and return the index of the erased child.
+    size_t eraseChild(shared_ptr<ExprTreeNode> child);
 
     inline bool isLeafNode() { return children.empty(); }
 

@@ -14,19 +14,19 @@ void MyPragmaHandler::HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer
             srcLocBegin.push_back(Tok.getLocation());
         } else if (II->isStr("end")) {
             srcLocEnd.push_back(Tok.getLocation());
-            // Check if the #pragma past end is after #pragma past begin
+            // Check if the #pragma race end is after #pragma race begin
             if (srcLocBegin.back().getRawEncoding() > srcLocEnd.back().getRawEncoding()) {
-                llvm::errs() << "The #pragma past end is before #pragma past begin\n";
+                llvm::errs() << "The #pragma race end is before #pragma race begin\n";
                 return;
             }
-            // Check if the #pragma past end is in the same file as #pragma past begin
+            // Check if the #pragma race end is in the same file as #pragma race begin
             if (PP.getSourceManager().getFileID(srcLocBegin.back()) != PP.getSourceManager().getFileID(srcLocEnd.back())) {
-                llvm::errs() << "The #pragma past end is in a different file from #pragma past begin\n";
+                llvm::errs() << "The #pragma race end is in a different file from #pragma race begin\n";
                 return;
             }
             // TODO: DO SOMETHING
-            // print the range of the #pragma past begin and #pragma past end
-            // llvm::errs() << "The range of the #pragma past begin and #pragma past end is from "
+            // print the range of the #pragma race begin and #pragma race end
+            // llvm::errs() << "The range of the #pragma race begin and #pragma race end is from "
             //              << PP.getSourceManager().getSpellingLineNumber(srcLocBegin.back()) << ":"
             //              << PP.getSourceManager().getSpellingColumnNumber(srcLocBegin.back()) << " to "
             //              << PP.getSourceManager().getSpellingLineNumber(srcLocEnd.back()) << ":"

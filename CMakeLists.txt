@@ -46,7 +46,7 @@ llvm_map_components_to_libnames(LLVM_LIBS
     x86info
 )
 
-add_executable(avn ${SOURCE})
+add_executable(race ${SOURCE})
 
 set( LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
@@ -54,7 +54,7 @@ set( LLVM_LINK_COMPONENTS
   Support
   )
 
-target_link_libraries(avn
+target_link_libraries(race
   clangAST
   clangASTMatchers
   clangBasic
@@ -67,5 +67,5 @@ target_link_libraries(avn
   # ${LLVM_LIBS}
   )
 
-install(TARGETS avn
+install(TARGETS race
   RUNTIME DESTINATION bin)

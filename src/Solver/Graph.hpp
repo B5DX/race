@@ -15,20 +15,20 @@
 // };
 
 /**
- * @brief A undirected graph class. We assume the type Node is pointer.
+ * @brief A generic undirected graph class.
  */
-template <typename Node>
-class UDGraph {
-  private:
+template<typename Node>
+class Graph {
+  protected:
     vector<Node> nodes;
     vector<vector<size_t>> adj_list;
     std::map<Node, size_t> node_to_index;
     // std::map<Node, size_t, PointerLess<Node>> node_to_index; // This is used for pointer comparison.
 
   public:
-    UDGraph() {}
+    Graph() {}
 
-    inline void addNode(Node node) {
+    virtual inline void addNode(const Node &node) {
         if (hasNode(node)) {
             return;
         }
@@ -37,28 +37,36 @@ class UDGraph {
         node_to_index[node] = nodes.size() - 1;
     }
 
-    void addEdge(Node src, Node dst) {
+    virtual inline void addNode(Node &&node) {
+        if (hasNode(node)) {
+            return;
+        }
+        nodes.emplace_back(node);
+        adj_list.push_back(vector<size_t>());
+        node_to_index[nodes.back()] = nodes.size() - 1;
+    }
+
+    virtual void addEdge(const Node &src, const Node &dst) {
         auto src_iter = node_to_index.find(src);
         auto dst_iter = node_to_index.find(dst);
         if (src_iter == node_to_index.end() || dst_iter == node_to_index.end()) {
-            throw std::runtime_error("Node not found in the graph.");
+            std::cout << "addEdge Error: Node not found in graph.\n";
+            exit(0);
         }
         size_t src_idx = src_iter->second;
         size_t dst_idx = dst_iter->second;
         auto &src_list = adj_list[src_idx];
-        auto &dst_list = adj_list[dst_idx];
-        if (std::find(src_list.begin(), src_list.end(), dst_idx) != src_list.end() ||
-            std::find(dst_list.begin(), dst_list.end(), src_idx) != dst_list.end()) {
+        if (std::find(src_list.begin(), src_list.end(), dst_idx) != src_list.end()) {
             return;
         } else {
             src_list.push_back(dst_idx);
-            dst_list.push_back(src_idx);
         }
     }
 
-    void removeNode(Node node) {
+    virtual void removeNode(const Node &node) {
         if (!hasNode(node)) {
-            throw std::runtime_error("Node not found in the graph.");
+            std::cout << "removeNode Error: Node not found in graph.\n";
+            exit(0);
         }
         size_t del_idx = node_to_index.at(node);
         nodes.erase(nodes.begin() + del_idx);
@@ -78,9 +86,9 @@ class UDGraph {
         }
     }
 
-    vector<Node> getNeighbors(Node node) const {
+    virtual vector<Node> getNeighbors(const Node &node) const {
         if (!hasNode(node)) {
-            throw std::runtime_error("Node not found in the graph.");
+            exit(0);
         }
         size_t idx = node_to_index.at(node);
         vector<Node> neighbors;
@@ -89,38 +97,113 @@ class UDGraph {
         return neighbors;
     }
 
-    const vector<Node> &getNodes() const { return nodes; }
+    virtual const vector<Node> &getNodes() const { return nodes; }
 
-    size_t size() const { return nodes.size(); }
+    virtual size_t size() const { return nodes.size(); }
 
-    void forEachNode(const std::function<void(Node)> &func) const {
+    virtual void forEachNode(const std::function<void(Node)> &func) const {
         for (const auto &node : nodes) {
             func(node);
         }
     }
 
-    void forEachNeighbor(Node node, const std::function<void(Node)> &func) const {
+    virtual void forEachNeighbor(Node node, const std::function<void(Node)> &func) const {
         for (const auto &idx : adj_list[node_to_index.at(node)]) {
             func(nodes[idx]);
         }
     }
 
-    bool adjacent(Node src, Node dst) const {
+    virtual bool adjacent(const Node &src, const Node &dst) const {
         auto src_iter = node_to_index.find(src);
         auto dst_iter = node_to_index.find(dst);
         if (src_iter == node_to_index.end() || dst_iter == node_to_index.end()) {
-            throw std::runtime_error("Node not found in the graph.");
+            exit(0);
         }
         size_t src_idx = src_iter->second;
         size_t dst_idx = dst_iter->second;
         auto &src_list = adj_list[src_idx];
-        auto &dst_list = adj_list[dst_idx];
-        return std::find(src_list.begin(), src_list.end(), dst_idx) != src_list.end() ||
-            std::find(dst_list.begin(), dst_list.end(), src_idx) != dst_list.end();
+        return std::find(src_list.begin(), src_list.end(), dst_idx) != src_list.end();
     }
 
-    inline bool hasNode(Node node) const {
+    virtual inline bool hasNode(Node node) const {
         return node_to_index.find(node) != node_to_index.end();
+    }
+
+    vector<Node> getTopologicalOrder() const {
+        vector<Node> res;
+        vector<bool> visited(nodes.size(), false);
+        std::function<void(size_t)> dfs = [&](size_t cur) {
+            visited[cur] = true;
+            for (size_t neighbor : adj_list[cur]) {
+                if (!visited[neighbor]) {
+                    dfs(neighbor);
+                }
+            }
+            res.push_back(nodes[cur]);
+        };
+        for (size_t i = 0; i < nodes.size(); i++) {
+            if (!visited[i]) {
+                dfs(i);
+            }
+        }
+        std::reverse(res.begin(), res.end());
+        return res;
+    }
+
+    // virtual void printGraph() const {
+    //     std::cout << "Printing Graph. Output Format: NodeIndex: NodeValue -> Neighbor1(is_equal), Neighbor2(is_equal), ...\n";
+    //     for (size_t i = 0; i < nodes.size(); i++) {
+    //         std::cout << i << ": ";
+    //         std::cout << *nodes[i] << ": ";
+    //         // std::cout << nodes[i]->to_string() << " -> " << "(" << nodes[i]->getHash() << ")" << ": ";
+    //         for (const auto &neighbor : adj_list[i]) {
+    //             std::cout << neighbor << ", ";
+    //             // std::cout << neighbor << "(" << (*nodes[i] == *nodes[neighbor]) << ")" << ", ";
+    //         }
+    //         std::cout << std::endl;
+    //     }
+    // }
+};
+
+/**
+ * @brief A undirected graph class. We assume the type Node is pointer.
+ */
+template <typename Node>
+class UDGraph : public Graph<Node> {
+  public:
+    UDGraph() : Graph<Node>() {}
+
+    virtual void addEdge(const Node &src, const Node &dst) {
+        auto src_iter = this->node_to_index.find(src);
+        auto dst_iter = this->node_to_index.find(dst);
+        if (src_iter == this->node_to_index.end() || dst_iter == this->node_to_index.end()) {
+            exit(0);
+        }
+        size_t src_idx = src_iter->second;
+        size_t dst_idx = dst_iter->second;
+        auto &src_list = this->adj_list[src_idx];
+        auto &dst_list = this->adj_list[dst_idx];
+        if (std::find(src_list.begin(), src_list.end(), dst_idx) != src_list.end() ||
+            std::find(dst_list.begin(), dst_list.end(), src_idx) != dst_list.end()) {
+            return;
+        } else {
+            src_list.push_back(dst_idx);
+            dst_list.push_back(src_idx);
+        }
+    }
+
+    virtual bool adjacent(const Node &src, const Node &dst) const {
+        auto src_iter = this->node_to_index.find(src);
+        auto dst_iter = this->node_to_index.find(dst);
+        if (src_iter == this->node_to_index.end() || dst_iter == this->node_to_index.end()) {
+            exit(0);
+        }
+        size_t src_idx = src_iter->second;
+        size_t dst_idx = dst_iter->second;
+        auto &src_list = this->adj_list[src_idx];
+        auto &dst_list = this->adj_list[dst_idx];
+        return std::find(src_list.begin(), src_list.end(), dst_idx) != src_list.end() ||
+            std::find(dst_list.begin(), dst_list.end(), src_idx) != dst_list.end();
     }
 
     UDGraph<Node> getSubGraph(const vector<Node> &nodes) const {
@@ -140,10 +223,10 @@ class UDGraph {
 
     vector<UDGraph<Node>> connectedComponents() const {
         vector<UDGraph<Node>> components;
-        vector<bool> visited(nodes.size(), false);
+        vector<bool> visited(this->nodes.size(), false);
         std::queue<size_t> q;
         vector<Node> component_nodes;
-        for (size_t i = 0; i < nodes.size(); i++) {
+        for (size_t i = 0; i < this->nodes.size(); i++) {
             if (visited[i]) {
                 continue;
             }
@@ -156,8 +239,8 @@ class UDGraph {
                     continue;
                 }
                 visited[cur] = true;
-                component_nodes.push_back(nodes[cur]);
-                for (size_t neighbor : adj_list[cur]) {
+                component_nodes.push_back(this->nodes[cur]);
+                for (size_t neighbor : this->adj_list[cur]) {
                     if (!visited[neighbor]) {
                         q.push(neighbor);
                     }
@@ -171,7 +254,7 @@ class UDGraph {
     void concatGraph(const UDGraph<Node> &other) {
         auto others_nodes = other.getNodes();
         for (const auto &node : others_nodes) {
-            addNode(node);
+            this->addNode(node);
         }
         for (size_t i = 0; i < others_nodes.size(); i++) {
             for (size_t j = i + 1; j < others_nodes.size(); j++) {
@@ -182,19 +265,6 @@ class UDGraph {
         }
     }
 
-    void printGraph() const {
-        std::cout << "Printing Graph. Output Format: NodeIndex: NodeValue -> Neighbor1(is_equal), Neighbor2(is_equal), ...\n";
-        for (size_t i = 0; i < nodes.size(); i++) {
-            std::cout << i << ": ";
-            std::cout << *nodes[i] << ": ";
-            // std::cout << nodes[i]->to_string() << " -> " << "(" << nodes[i]->getHash() << ")" << ": ";
-            for (const auto &neighbor : adj_list[i]) {
-                std::cout << neighbor << ", ";
-                // std::cout << neighbor << "(" << (*nodes[i] == *nodes[neighbor]) << ")" << ", ";
-            }
-            std::cout << std::endl;
-        }
-    }
 };
 
 #endif

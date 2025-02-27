@@ -14,8 +14,9 @@ void ExprTreeNode::hoist() {
     for (int i = 0; i < children_len; i++) {
         children[i]->hoist();
     }
-    // "-" and "/" shouldn't be hoisted directly.
-    if (this->to_string() != "-" && this->to_string() != "/" && this->to_string() != "call") {
+    // "-", "/" and "**" shouldn't be hoisted directly.
+    if (this->to_string() != "-" && this->to_string() != "/" 
+        && this->to_string() != "call" && this->to_string() != "**") {
         for (int i = 0; i < children_len; i++) {
             // This insert operation will maintain the original order of children. But takes more time.
             // (Maybe it can be considered to change children vector to list if the order matters?)
@@ -56,7 +57,7 @@ void ExprTreeNode::deposit() {
         if (auto uop = llvm_pointer_cast<UnaryOp>(src)) {
             uop->setOperand(child->getExpression());
         } else {
-            throw std::runtime_error("Only unary operator can have one child.");
+            exit(0);
         }        
         return;
     }
@@ -69,22 +70,28 @@ void ExprTreeNode::deposit() {
         auto node2 = node_queue.front();
         node_queue.pop_front();
         shared_ptr<BinaryOp> biop;
+        biop = llvm_pointer_cast<BinaryOp>(src->clone());
         // ! Note that src here may have empty member lhs or rhs.
-        if (auto add = llvm_pointer_cast<AddOp>(src)) {
-            biop = make_shared<AddOp>();
-        } else if (auto sub = llvm_pointer_cast<SubOp>(src)) {
-            biop = make_shared<SubOp>();
-        } else if (auto mul = llvm_pointer_cast<MulOp>(src)) {
-            biop = make_shared<MulOp>();
-        } else if (auto div = llvm_pointer_cast<DivOp>(src)) {
-            biop = make_shared<DivOp>();
-        } else if (auto as = llvm_pointer_cast<AssignOp>(src)) {
-            biop = make_shared<AssignOp>();
-        } else if (auto call = llvm_pointer_cast<CallOp>(src)) {
-            biop = make_shared<CallOp>();
-        } else {
-            throw std::runtime_error("Unknown operator type.");
-        }
+        // if (auto add = llvm_pointer_cast<AddOp>(src)) {
+        //     biop = make_shared<AddOp>();
+        // } else if (auto sub = llvm_pointer_cast<SubOp>(src)) {
+        //     biop = make_shared<SubOp>();
+        // } else if (auto mul = llvm_pointer_cast<MulOp>(src)) {
+        //     biop = make_shared<MulOp>();
+        // } else if (auto div = llvm_pointer_cast<DivOp>(src)) {
+        //     biop = make_shared<DivOp>();
+        // } else if (auto as = llvm_pointer_cast<AssignOp>(src)) {
+        //     biop = make_shared<AssignOp>();
+        // } else if (auto call = llvm_pointer_cast<CallOp>(src)) {
+        //     biop = make_shared<CallOp>();
+        // } else if (auto power = llvm_pointer_cast<PowerOp>(src)) {
+        //     biop = make_shared<PowerOp>();
+        // } else if (auto mod = llvm_pointer_cast<ModOp>(src)) {
+        //     biop = make_shared<ModOp>();
+        // } else {
+        //     llvm::outs() << "Deposite unsupported operator: " << src->to_string() << "\n";
+        //     exit(0);
+        // }
         biop->setLHS(node1->getExpression());
         biop->setRHS(node2->getExpression());
         shared_ptr<ExprTreeNode> new_expr_node;
@@ -105,15 +112,28 @@ void ExprTreeNode::deposit() {
     src = new_root->getExpression();
 }
 
-void ExprTreeNode::eraseChild(shared_ptr<ExprTreeNode> child) {
+size_t ExprTreeNode::eraseChild(shared_ptr<ExprTreeNode> child) {
     if (!isOperatorNode()) {
-        throw std::runtime_error("erase child from a none operator node.");
+        // more detailed information
+        // std::cout << "Error: parent tostring. " << this->to_string() << "\n";
+        // std::cout << "Error: parent expression. " << this->getExpression()->to_string() << "\n";
+        // for (auto child : children) {
+        //     std::cout << "Error: children: " << child->to_string() << "\n";
+        // }
+        exit(0);
     }
     auto res = std::find(children.begin(), children.end(), child);
     if (res == children.end()) {
-        throw std::runtime_error("erase absent child.");
+        // std::cout << "Error: Try to erase a non-exist child.\n";
+        // std::cout << "Error: parent tostring. " << this->to_string() << "\n";
+        // std::cout << "Error: parent expression. " << this->getExpression()->to_string() << "\n";
+        // for (auto child : children) {
+        //     std::cout << "Error: children: " << child->to_string() << "\n";
+        // }
+        exit(0);
     }
     children.erase(res);
+    return res - children.begin();
 }
 
 void ExprTreeNode::printTree(int depth) {

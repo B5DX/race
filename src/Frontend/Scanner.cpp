@@ -58,17 +58,10 @@ void MatchForStmtCallback::run(const MatchFinder::MatchResult &Result) {
             }
             Diag.Report(for_stmt->getBeginLoc(), diag_warn_potential_for);
 
-            shared_ptr<ir::Block> outer_block = std::make_shared<ir::Block>(nullptr);
             this->for_stmt = std::make_shared<ir::ForStmt>(for_stmt);
-            outer_block->push_back(this->for_stmt);
-            llvm::outs() << this->for_stmt->to_string() << "\n";
-            llvm::outs() << "----------------------\n";
-            vector<ir::Block> blocks = this->for_stmt->getInnermostBlocks();
-            
-            for (const auto &block : blocks) {
-                extract::extract(outer_block, block, this->avn_cnt++);
-            }
-            llvm::outs() << outer_block->to_string() << "\n";
+            auto avn_block = make_shared<ir::AVNBlock>(this->for_stmt);
+            extract::extract(avn_block, this->avn_cnt++);
+            llvm::outs() << avn_block->getBlock()->to_string() << "\n";
         }
     }
 }
@@ -81,7 +74,7 @@ Scanner::CreateASTConsumer(CompilerInstance &CI,
     auto &Diag = CI.getASTContext().getDiagnostics();
     auto DiagWarnMain = Diag.getCustomDiagID(
         DiagnosticsEngine::Warning,
-        "This for statement is in avn pragma: ");
+        "This for statement is in race pragma: ");
 
     ForStmtFinder = std::make_unique<MatchFinder>();
 

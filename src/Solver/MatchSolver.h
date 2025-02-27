@@ -4,6 +4,7 @@
 #include "IR/ExprTree.h"
 #include "Solver/Graph.hpp"
 #include "common.h"
+#include <boost/rational.hpp>
 
 /**
  * @brief A node in the delta-graph. It represents the difference between two ExprTreeNode(may be ArrayRef, DeclRef or Number).
@@ -11,9 +12,8 @@
  */
 class DeltaNode {
 private:
-    shared_ptr<ir::ExprTreeNode> arr_left;
-    shared_ptr<ir::ExprTreeNode> arr_right;
-    std::map<string, int> delta; // key: intersection of left and right's dimension name, value: difference between left and right.
+    shared_ptr<ir::ExprTreeNode> arr_left, arr_right;
+    std::map<string, boost::rational<int>> delta; // key: intersection of left and right's dimension name, value: difference between left and right.
     size_t hash_number;
 
 public:
@@ -33,7 +33,15 @@ public:
         return arr_right;
     }
 
-    const std::map<string, int> &getDelta() const {
+    inline shared_ptr<const ir::ExprTreeNode> getLeft() const {
+        return arr_left;
+    }
+
+    inline shared_ptr<const ir::ExprTreeNode> getRight() const {
+        return arr_right;
+    }
+
+    const std::map<string, boost::rational<int>> &getDelta() const {
         return delta;
     }
 

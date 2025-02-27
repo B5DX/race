@@ -8,6 +8,7 @@
 
 #include "Frontend/PragmaHandler.h"
 #include "Frontend/Scanner.h"
+#include "common.h"
 
 using namespace llvm;
 using namespace clang;
@@ -28,6 +29,9 @@ static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 
 // A help message for this specific tool can be added afterwards.
 static cl::extrahelp MoreHelp("\nMore help text...\n");
+
+// Define the global_config variable, which is declared as extern in common.h
+Config global_config;
 
 int main(int argc, const char **argv) {
     // llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);

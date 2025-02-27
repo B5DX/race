@@ -7,7 +7,8 @@ namespace extract {
 using Forest = vector<shared_ptr<ir::ExprTree>>;
 using TreeNodeVec = vector<shared_ptr<ir::ExprTreeNode>>;
 
-void extract(shared_ptr<ir::Block> outer_block, ir::Block assignment_block, int avn_cnt);
+void extract(shared_ptr<ir::AVNBlock> avn_block, int avn_cnt);
+// void extract(shared_ptr<ir::AVNBlock> avn_block, ir::Block assignment_block, int avn_cnt);
 
 } // namespace extract
 

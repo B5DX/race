@@ -1,5 +1,6 @@
 #include "IR/IR.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
+#include <boost/rational.hpp>
 
 using namespace ir;
 
@@ -23,7 +24,7 @@ string UnaryOp::to_string() const {
 string BinaryOp::to_string() const {
     string lhs_str, rhs_str;
     lhs_str = generateParenthesesStr(lhs.get(), this, std::less<int>());
-    rhs_str = generateParenthesesStr(rhs.get(), this, std::less_equal<int>());
+    rhs_str = generateParenthesesStr(rhs.get(), this, std::less<int>());
     return lhs_str + " " + op + " " + rhs_str;
 }
 
@@ -47,7 +48,7 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
         case clang::BinaryOperator::Opcode::BO_Assign:
             return std::make_shared<AssignOp>(lhs, rhs);
         default:
-            throw std::runtime_error("Unsupported binary operator");
+            exit(0);
         }
     } else if (auto unary_op = llvm::dyn_cast<clang::UnaryOperator>(expr)) {
         auto sub_expr = parseExpression(unary_op->getSubExpr(), parent_loop);
@@ -55,7 +56,7 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
         case clang::UnaryOperator::Opcode::UO_Minus:
             return std::make_shared<NegOp>(sub_expr);
         default:
-            throw std::runtime_error("Unsupported unary operator");
+            exit(0);
         }
     } else if (auto decl_ref = llvm::dyn_cast<clang::DeclRefExpr>(expr)) {
         return std::make_shared<DeclRef>(decl_ref->getNameInfo().getAsString());
@@ -93,7 +94,7 @@ shared_ptr<Expression> ir::parseExpression(const clang::Expr *expr, ForStmt *par
         } else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(base)) {
             return std::make_shared<ArrayRef>(decl_ref, indices, parent_loop);
         } else {
-            throw std::runtime_error("Unsupported array expression");
+            exit(0);
         }
     } else if (auto paren_expr = llvm::dyn_cast<clang::ParenExpr>(expr)) {
         return parseExpression(paren_expr->getSubExpr(), parent_loop);
@@ -164,7 +165,7 @@ void ForStmt::buildBounds(const clang::ForStmt *for_stmt) {
 
 void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
     if (auto inner_for_stmt = llvm::dyn_cast<clang::ForStmt>(stmt)) {
-        this->body.push_back(std::make_shared<ForStmt>(inner_for_stmt, this));
+        this->body->push_back(std::make_shared<ForStmt>(inner_for_stmt, this));
         // llvm::errs() << "Inner for loop detected\n";
     } else if (auto assign_expr = llvm::dyn_cast<clang::BinaryOperator>(stmt)) {
         if (assign_expr->getOpcode() == clang::BinaryOperator::Opcode::BO_Assign) {
@@ -173,12 +174,13 @@ void ForStmt::processInnerStmt(const clang::Stmt *stmt) {
             auto lhs_expr = parseExpression(lhs, this);
             auto rhs_expr = parseExpression(rhs, this);
 
-            this->body.push_back(std::make_shared<ir::Assignment>(lhs_expr, rhs_expr));
+            this->body->push_back(std::make_shared<ir::Assignment>(lhs_expr, rhs_expr));
         }
     }
 }
 
-ForStmt::ForStmt(const clang::ForStmt *for_stmt, ForStmt *parent_for) : Statement(STMT_FOR), parent_for(parent_for), body(this) {
+ForStmt::ForStmt(const clang::ForStmt *for_stmt, ForStmt *parent_for) : Statement(STMT_FOR), parent_for(parent_for) {
+    body = make_shared<ir::Block>(this);
     this->buildBounds(for_stmt);
     index_vars.push_back(loop_var);
     if (parent_for) {
@@ -222,31 +224,324 @@ shared_ptr<ir::Expression> ir::buildExpression(shared_ptr<ir::Expression> base_e
 
 }
 
+void ForStmt::recomputeArrayInfo() {
+    for (auto &stmt : *body) {
+        if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+            inner_for->recomputeArrayInfo();
+        } else if (auto assign = llvm_pointer_cast<Assignment>(stmt)) {
+            // The rpi and norm_idx should be re-computed after the parent_for is set.
+            auto recompute = [&](shared_ptr<ArrayRef> array_ref) {
+                array_ref->recomputeArrayInfo();
+            };
+            for_each_expr<ArrayRef>(assign->getRHS(), recompute);
+            for_each_expr<ArrayRef>(assign->getLHS(), recompute);
+        }
+    }
+}
+
+void ForStmt::setParentFor(ForStmt *parent_for, bool recompute_arr_info) {
+    this->index_vars = {this->loop_var};
+    if (parent_for) {
+        const auto &parent_index_vars = parent_for->index_vars;
+        index_vars.insert(index_vars.end(), parent_index_vars.begin(), parent_index_vars.end());
+        this->depth = parent_for->depth + 1;
+    }
+    this->parent_for = parent_for;
+
+    if (recompute_arr_info) {
+        for (auto &stmt : *body) {
+            if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+                inner_for->setParentFor(this, recompute_arr_info);
+            } else if (auto assign = llvm_pointer_cast<Assignment>(stmt)) {
+                // The rpi and norm_idx should be re-computed after the parent_for is set.
+                auto recompute = [&](shared_ptr<ArrayRef> array_ref) {
+                    array_ref->recomputeArrayInfo();
+                };
+                for_each_expr<ArrayRef>(assign->getRHS(), recompute);
+                for_each_expr<ArrayRef>(assign->getLHS(), recompute);
+            }
+        }
+    } else {
+        for (auto &stmt : *body) {
+            if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+                inner_for->setParentFor(this, recompute_arr_info);
+            }
+        }
+    }
+}
+
+Subscript::Subscript(shared_ptr<ir::Expression> expr, const std::set<string> &loop_vars) {
+    Subscript subs = is_aipb_form(expr, loop_vars);
+    this->a = subs.a;
+    this->i = subs.i;
+    this->b = subs.b;
+    this->expr_form = subs.expr_form;
+}
+
+/**
+ * @brief Get the constant and the subscript from the two results of is_aipb_form.
+ * Only one of the two results should be const_num. 
+ * The sign of the return is set corresponding to parameter subop. 
+ * So the caller can add the return directly without considering the sign for SubOp.
+ * 
+ * @param subop If true, the operator is subtraction, and the sign of the return is set innerly.
+ */
+std::pair<int, Subscript> get_const_and_subscript(
+    const Subscript &left_res, const Subscript &right_res, bool subop = false) {
+    if (left_res.getExprForm() == Subscript::ExprForm::const_num) {
+        Subscript tmp = right_res;
+        if (subop) {
+            tmp.setA(-tmp.getA());
+            tmp.setB(-tmp.getB());
+        }
+        return {left_res.getB(), tmp};
+    } else {
+        if (subop) return {-right_res.getB(), left_res};
+        else return {right_res.getB(), left_res};
+    }
+}
+
+Subscript Subscript::is_aipb_form(shared_ptr<ir::Expression> expr, const std::set<string> &loop_vars) {
+    using std::make_pair;
+    auto invalid_res = Subscript(ExprForm::invalid, 1, nullptr, 0);
+    if (ir::llvm_isa<ir::Number>(expr)) {
+        return {
+            ExprForm::const_num, 1, nullptr, int(std::get<0>(ir::llvm_pointer_cast<ir::Number>(expr)->getValue()))
+        };
+    } else if (auto decl_ref = ir::llvm_pointer_cast<ir::DeclRef>(expr)) {
+        if (loop_vars.find(decl_ref->to_string()) != loop_vars.end()) {
+            return {ExprForm::aipb, 1, decl_ref, 0};
+        } else {
+            return {ExprForm::nonloop_index_var, 1, decl_ref, 0};
+        }
+    }
+
+    if (auto bop = ir::llvm_pointer_cast<ir::BinaryOp>(expr)) {
+        Subscript left_res = is_aipb_form(bop->getLHS(), loop_vars);
+        Subscript right_res = is_aipb_form(bop->getRHS(), loop_vars);
+        int expr_id = left_res.expr_form + right_res.expr_form;
+        if (ir::llvm_isa<ir::MulOp>(bop)) {
+            if (expr_id == 11) {
+                auto tmp = get_const_and_subscript(left_res, right_res);
+                int coef = tmp.first;
+                const Subscript &subs = tmp.second;
+                return {ExprForm::aipb, coef * subs.a, subs.i, coef * subs.b};
+            }
+            if (expr_id == 20) {
+                return {ExprForm::const_num, 1, nullptr, left_res.b * right_res.b};
+            } 
+            if (expr_id == 110) {
+                auto tmp = get_const_and_subscript(left_res, right_res);
+                int coef = tmp.first;
+                const Subscript &subs = tmp.second;
+                return {ExprForm::nonloop_index_var, coef * subs.a, subs.i, coef * subs.b};
+            }
+            return invalid_res;
+        } else if (ir::llvm_isa<ir::AddOp>(bop) || ir::llvm_isa<ir::SubOp>(bop)) {
+            bool is_sub = ir::llvm_isa<ir::SubOp>(bop);
+            if (expr_id == 2) {
+                if (left_res.getI()->to_string() != right_res.getI()->to_string()) return invalid_res;
+                if (is_sub)
+                    return {ExprForm::aipb, left_res.a - right_res.a, left_res.i, left_res.b - right_res.b};
+                else 
+                    return {ExprForm::aipb, left_res.a + right_res.a, left_res.i, left_res.b + right_res.b};
+            }
+            if (expr_id == 11 || expr_id == 110) {
+                auto tmp = get_const_and_subscript(left_res, right_res, is_sub);
+                int cons = tmp.first;
+                const Subscript &subs = tmp.second;
+                if (expr_id == 11)
+                    return {ExprForm::aipb, subs.a, subs.i, subs.b + cons};
+                else
+                    return {ExprForm::nonloop_index_var, subs.a, subs.i, subs.b + cons};
+            }
+            if (expr_id == 20) {
+                if (is_sub)
+                    return {ExprForm::const_num, 1, nullptr, left_res.b - right_res.b};
+                else
+                    return {ExprForm::const_num, 1, nullptr, left_res.b + right_res.b};
+            }
+            return invalid_res;
+        } else if (ir::llvm_isa<ir::DivOp>(bop)) {
+            if (left_res.expr_form == ExprForm::aipb && right_res.expr_form == ExprForm::const_num) {
+                auto tmp = get_const_and_subscript(left_res, right_res);
+                int cons = tmp.first;
+                const Subscript &subs = tmp.second;
+                if (subs.a % cons != 0 || subs.b % cons != 0) return invalid_res;
+                return {ExprForm::aipb, subs.a / cons, subs.i, subs.b / cons};
+            }
+            if (left_res.expr_form == ExprForm::nonloop_index_var && right_res.expr_form == ExprForm::const_num) {
+                auto tmp = get_const_and_subscript(left_res, right_res);
+                int cons = tmp.first;
+                const Subscript &subs = tmp.second;
+                if (subs.a % cons != 0 || subs.b % cons != 0) return invalid_res;
+                return {ExprForm::nonloop_index_var, subs.a / cons, subs.i, subs.b / cons};
+            }
+            if (left_res.expr_form == ExprForm::const_num && right_res.expr_form == ExprForm::const_num) {
+                if (left_res.b % right_res.b != 0) return invalid_res;
+                return {ExprForm::const_num, 1, nullptr, left_res.b / right_res.b};
+            }
+            return invalid_res;
+
+        } else {
+            llvm::outs() << "Unsupported binary operation: " << bop->to_string() << "\n";
+            return invalid_res;
+        }
+    } else if (auto uop = ir::llvm_pointer_cast<ir::UnaryOp>(expr)) {
+        if (ir::llvm_isa<ir::NegOp>(uop)) {
+            auto tmp = is_aipb_form(uop->getOperand(), loop_vars);
+            return {tmp.expr_form, -tmp.a, tmp.i, -tmp.b};
+        } else {
+            llvm::outs() << "Unsupported unary operation: " << uop->to_string() << "\n";
+            return invalid_res;
+        }
+    }
+    return invalid_res;
+}
+
+void ArrayRef::computeRPI() {
+    using boost::rational;
+    using ExprForm = ir::Subscript::ExprForm;
+    vector<string> idx_list;
+    vector<int> idx_coef;
+    std::map<string, rational<int>> firstIdxOffset;
+    std::map<string, vector<rational<int>>> idxDelta;
+    for (const auto &idx : this->norm_idx) {
+        if (!idx.isValid()) {
+            rpi = 0;
+            return;
+        }
+        ExprForm form = idx.getExprForm();
+        if (form == ExprForm::nonloop_index_var) {
+            idx_list.push_back(
+                std::to_string(idx.getA()) + "*" + idx.getI()->to_string() + "+" + std::to_string(idx.getB()));
+            idx_coef.push_back(idx.getA());
+        } else if (form == ExprForm::const_num) {
+            idx_list.push_back("#const#");
+            idx_coef.push_back(idx.getB());
+        } else { // form == ExprForm::aipb
+            idx_list.push_back(idx.getI()->to_string());
+            idx_coef.push_back(idx.getA());
+            string i_str = idx.getI()->to_string();
+            if (firstIdxOffset.find(i_str) == firstIdxOffset.end()) {
+                firstIdxOffset[i_str] = rational<int>(idx.getB(), idx.getA());
+                idxDelta[i_str].push_back(idx.getB() % idx.getA());
+            } else {
+                idxDelta[i_str].push_back(rational<int>(idx.getB(), idx.getA()) - firstIdxOffset[i_str]);
+            }
+        }
+    }
+    this->firstIdxOffset = firstIdxOffset;
+    string compact_info = this->getArrayName()->to_string() + "$";
+    for (size_t i = 0; i < idx_list.size(); i++) {
+        compact_info += idx_list[i] + "$";
+    }
+    for (size_t i = 0; i < idx_coef.size(); i++) {
+        compact_info += std::to_string(idx_coef[i]) + "$";
+    }
+    for (const auto &pair : idxDelta) {
+        compact_info += pair.first + "$";
+        for (const auto &delta : pair.second) {
+            compact_info += std::to_string(delta.numerator()) + "/" + std::to_string(delta.denominator()) + "$";
+        }
+    }
+    // If ESR is enabled, the firstIdxOffset of idx (except the innermost one) should be included in the compact_info.
+    // Since different firstIdxOffset (except for innermost idx) is considered as different rpi array.
+    if (global_config.ESR) {
+        if (this->getParentLoop()) {
+            string innermost_idx = this->getParentLoop()->getLoopVars().front()->to_string();
+            for (auto &pair : firstIdxOffset) {
+                if (pair.first != innermost_idx) {
+                    compact_info += pair.first + "$" + std::to_string(pair.second.numerator()) + "/" + std::to_string(pair.second.denominator()) + "$";
+                }
+            }
+        }
+    }
+    rpi = std::hash<string>()(compact_info);
+}
+
+void ArrayRef::computeNormIdx() {
+    norm_idx.clear();
+    std::set<string> loop_vars_set;
+    if (parent_loop) {
+        const auto &loop_vars = parent_loop->getLoopVars(); 
+        for (const auto &loop_var : loop_vars) {
+            loop_vars_set.insert(loop_var->to_string());
+        }
+    }
+    for (const auto &idx : indices) {
+        norm_idx.push_back(Subscript(idx, loop_vars_set));
+    }
+}
+
+ArrayRef::ArrayRef(const string &array_name, const vector<Subscript> &subscripts, ForStmt *parent_loop)
+    : Expression(EXPR_ARRAY_REF), norm_idx(subscripts), parent_loop(parent_loop) {
+    this->array = std::make_shared<DeclRef>(array_name);
+    // Compute the indices from norm_idx.
+    for (const auto &idx : norm_idx) {
+        if (!idx.isValid()) {
+            llvm::outs() << "Invalid subscript: " << idx.to_string() << "\n";
+            exit(0);
+        }
+        int a = idx.getA();
+        int b = idx.getB();
+        shared_ptr<DeclRef> i = nullptr;
+        auto gene_expr = idx.generateExpr();
+        if (gene_expr) this->indices.push_back(gene_expr);
+        else {
+            llvm::outs() << "Invalid subscript: " << idx.to_string() << "\n";
+            exit(0);
+        }
+    }
+    computeRPI();
+}
+
 ArrayRef::ArrayRef(const string &array_name, const vector<std::pair<string, int>> &indices, ForStmt *parent_loop)
     : Expression(EXPR_ARRAY_REF), parent_loop(parent_loop) {
     this->array = std::make_shared<DeclRef>(array_name);
     for (const auto &idx : indices) {
         this->indices.push_back(buildExpression(std::make_shared<DeclRef>(idx.first), idx.second));
     }
+    computeNormIdx();
+    computeRPI();
 }
 
 string ForStmt::to_string() const {
+    string each_indent;
+    for (unsigned i = 0; i < this->indent_space; i++) {
+        each_indent += " ";
+    }
     string indent = "";
     for (unsigned i = 0; i < depth; i++) {
-        indent += "    ";
+        indent += each_indent;
     }
     string ret = "for (" + loop_var->to_string() + " = " + begin->to_string() + " : " + end->to_string() + ") {\n";
-    for (const auto &stmt : body) {
-        ret += indent + "    " + stmt->to_string() + "\n";
+    for (const auto &stmt : *body) {
+        ret += indent + each_indent + stmt->to_string() + "\n";
     }
     ret += indent + "}";
     return ret;
 }
 
+void Block::setParentFor(ForStmt *parent_for, bool recompute_arr_info) {
+    this->parent_for = parent_for; 
+    for (auto &stmt : body) {
+        if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
+            inner_for->setParentFor(parent_for);
+        } else if (auto assign = llvm_pointer_cast<Assignment>(stmt)) {
+            auto temp_func = [&](shared_ptr<ArrayRef> array_ref) {
+                array_ref->setParentLoop(parent_for, recompute_arr_info);
+            };
+            for_each_expr<ArrayRef>(assign->getLHS(), temp_func);
+            for_each_expr<ArrayRef>(assign->getRHS(), temp_func);
+        }
+    }
+}
+
 vector<Block> ForStmt::getInnermostBlocks() {
     vector<Block> ret;
-    for (size_t idx = 0; idx < body.size();) {
-        const auto &stmt = body[idx];
+    for (size_t idx = 0; idx < body->size();) {
+        const auto &stmt = body->at(idx);
         if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
             auto inner_blocks = inner_for->getInnermostBlocks();
             ret.insert(ret.end(), inner_blocks.begin(), inner_blocks.end());
@@ -254,9 +549,9 @@ vector<Block> ForStmt::getInnermostBlocks() {
         } else if (llvm_isa<Assignment>(stmt)) {
             Block assign_block(this);
             do {
-                assign_block.push_back(body[idx]);
+                assign_block.push_back(body->at(idx));
                 ++idx;
-            } while (idx < body.size() && llvm_isa<Assignment>(body[idx]));
+            } while (idx < body->size() && llvm_isa<Assignment>(body->at(idx)));
             ret.push_back(assign_block);
         }
     }
@@ -273,7 +568,7 @@ int ir::exprEval(shared_ptr<ir::Expression> expr) {
         return std::get<0>(num->getValue());
     } else if (auto bop = llvm_pointer_cast<ir::BinaryOp>(expr)) {
         if (llvm_isa<ir::DivOp>(bop)) {
-            throw std::runtime_error("DivOp is not supported yet.");
+            exit(0);
         }
         auto op = bop->getOpStr();
         if (llvm_isa<ir::DeclRef>(bop->getLHS())) { // We assume DeclRef must be loop var here.
@@ -285,7 +580,7 @@ int ir::exprEval(shared_ptr<ir::Expression> expr) {
             case '*':
                 return 0;
             default:
-                throw std::runtime_error("Unsupported binary operator.");
+                exit(0);
             }
         } else if (llvm_isa<ir::DeclRef>(bop->getRHS())) {
             switch (op[0]) {
@@ -296,7 +591,7 @@ int ir::exprEval(shared_ptr<ir::Expression> expr) {
             case '*':
                 return 0;
             default:
-                throw std::runtime_error("Unsupported binary operator.");
+                exit(0);
             }
         } else {
             switch (op[0]) {
@@ -307,7 +602,7 @@ int ir::exprEval(shared_ptr<ir::Expression> expr) {
             case '*':
                 return exprEval(bop->getLHS()) * exprEval(bop->getRHS());
             default:
-                throw std::runtime_error("Unsupported binary operator.");
+                exit(0);
             }
         }
     }
@@ -315,7 +610,7 @@ int ir::exprEval(shared_ptr<ir::Expression> expr) {
     else if (auto decl_ref = llvm_pointer_cast<ir::DeclRef>(expr)) {
         return 0;
     } else {
-        throw std::runtime_error("UnaryOp is not supported yet.");
+        exit(0);
     }
 }
 
@@ -358,9 +653,11 @@ std::map<string, int> ArrayRef::getDisp() const {
 
 string ArrayRef::to_string() const {
     string ret = array->to_string();
-    for (auto iter = indices.crbegin(); iter != indices.crend(); iter++) {
-        ret += "[" + (*iter)->to_string() + "]";
+    ret += "[" + indices.back()->to_string();
+    for (auto iter = indices.crbegin() + 1; iter != indices.crend(); iter++) {
+        ret += "][" + (*iter)->to_string();
     }
+    ret += "]";
     return ret;
 }
 
@@ -375,8 +672,13 @@ shared_ptr<ir::BinaryOp> ir::buildBinaryOp(string op, shared_ptr<ir::Expression>
         return std::make_shared<ir::DivOp>(l_expr, r_expr);
     } else if (op == "call") {
         return std::make_shared<ir::CallOp>(l_expr, r_expr);
+    } else if (op == "**") {
+        return std::make_shared<ir::PowerOp>(l_expr, r_expr);
+    } else if (op == "mod") {
+        return std::make_shared<ir::ModOp>(l_expr, r_expr);
     } else {
-        throw std::runtime_error("Unsupported operator.");
+        llvm::outs() << "Build unsupported binary operation: " << op << "\n";
+        exit(0);
     }
 }
 
@@ -388,6 +690,6 @@ shared_ptr<ir::UnaryOp> ir::buildUnaryOp(string op, shared_ptr<ir::Expression> e
     } else if (op == "-") {
         return std::make_shared<ir::NegOp>(expr);
     } else {
-        throw std::runtime_error("Unsupported operator.");
+        exit(0);
     }
 }
