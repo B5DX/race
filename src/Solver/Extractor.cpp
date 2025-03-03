@@ -142,13 +142,7 @@ void postProcess(shared_ptr<ir::AVNBlock> avn_block, IVInfoManager &info_manager
         const auto &info = info_manager.getIVInfo(iv);
         if (auto arf = llvm_pointer_cast<ArrayRef>(temp_arf)) {
             // Add AVNVarDecl.
-            auto dim_cnt = arf->getIndices().size();
-            string dim_str = "(:";
-            for (size_t i = 1; i < dim_cnt; i++) {
-                dim_str += ",:";
-            }
-            dim_str += ")";
-            avn_block->addAVNVarDecl("real(kind=8), allocatable :: " + iv + dim_str);
+            string alloc_str = "double " + iv;
 
             // Add AVNVarAlloc. e.g. allocate(array(js-2:je+5, 0:2))
             vector<string> alloc_size;
@@ -166,24 +160,23 @@ void postProcess(shared_ptr<ir::AVNBlock> avn_block, IVInfoManager &info_manager
                 // Push current range to alloc_size.
                 if (if_mod) {
                     long long mod = info.range_circle->index_mod.at(idx_str);
-                    alloc_size.push_back("0:" + std::to_string(mod-1));
+                    alloc_size.push_back(std::to_string(mod));
                 } else {
                     int max_delta = info.used_max_delta.at(idx_str);
                     int min_delta = info.used_min_delta.at(idx_str);
 
                     alloc_size.push_back(
-                        ir::buildExpression(idx_for_map[idx_str]->getBegin(), min_delta)->to_string() + ":" +
-                        ir::buildExpression(idx_for_map[idx_str]->getEnd(), max_delta)->to_string());
+                        ir::buildExpression(idx_for_map[idx_str]->getEnd(), max_delta + 1)->to_string());
                 }
             }
-            string alloc_str = "allocate(" + iv + "(" + alloc_size[0];
-            for (size_t i = 1; i < alloc_size.size(); i++) {
-                alloc_str += ", " + alloc_size[i];
+            alloc_str += "[" + alloc_size.back();
+            for (auto iter = alloc_size.rbegin() + 1; iter != alloc_size.rend(); iter++) {
+                alloc_str += "][" + *iter;
             }
-            alloc_str += "))";
-            avn_block->addAVNVarAlloc(alloc_str);
+            alloc_str += "];";
+            avn_block->addAVNVarDecl(alloc_str);
         } else {
-            avn_block->addAVNVarDecl("real(kind=8) :: " + iv);
+            avn_block->addAVNVarDecl("double " + iv + ";");
         }
     }
 }

@@ -9,8 +9,9 @@
 
 class MyPragmaHandler : public clang::PragmaHandler {
     bool IsValidatorRegistered;
-    llvm::SmallVector<clang::SourceLocation> srcLocBegin;
-    llvm::SmallVector<clang::SourceLocation> srcLocEnd;
+    llvm::SmallVector<clang::SourceLocation> srcLocPragmaBegin;
+    llvm::SmallVector<clang::SourceLocation> srcLocPragmaEnd;
+    llvm::SmallVector<clang::SourceLocation> srcLocVar;
 
   public:
     MyPragmaHandler() : PragmaHandler("race"),
@@ -20,13 +21,35 @@ class MyPragmaHandler : public clang::PragmaHandler {
                       clang::Token &PragmaTok) override;
 
     bool ifBelongsToPragma(clang::SourceLocation Loc) {
-        assert(srcLocBegin.size() == srcLocEnd.size());
-        for (size_t idx = 0; idx < srcLocBegin.size(); idx++) {
-            if (Loc >= srcLocBegin[idx] && Loc <= srcLocEnd[idx]) {
+        assert(srcLocPragmaBegin.size() == srcLocPragmaEnd.size());
+        for (size_t idx = 0; idx < srcLocPragmaBegin.size(); idx++) {
+            if (Loc >= srcLocPragmaBegin[idx] && Loc <= srcLocPragmaEnd[idx]) {
                 return true;
             }
         }
         return false;
+    }
+
+    clang::SourceLocation getMatchedVarLoc(clang::SourceLocation Loc) {
+        clang::SourceLocation matchedLoc(clang::SourceLocation::getFromRawEncoding(0));
+        for (size_t idx = 0; idx < srcLocVar.size(); idx++) {
+            if (Loc > srcLocVar[idx] && matchedLoc < srcLocVar[idx]) {
+                matchedLoc = srcLocVar[idx];
+            }
+        }
+        return matchedLoc;
+    }
+
+    const llvm::SmallVector<clang::SourceLocation> &getSrcLocPragmaBegin() const {
+        return srcLocPragmaBegin;
+    }
+
+    const llvm::SmallVector<clang::SourceLocation> &getSrcLocPragmaEnd() const {
+        return srcLocPragmaEnd;
+    }
+
+    const llvm::SmallVector<clang::SourceLocation> &getSrcLocVar() const {
+        return srcLocVar;
     }
 };
 

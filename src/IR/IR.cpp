@@ -221,7 +221,6 @@ shared_ptr<ir::Expression> ir::buildExpression(shared_ptr<ir::Expression> base_e
     } else {
         return std::make_shared<ir::SubOp>(base_expr, std::make_shared<ir::Number>(-shift));
     }
-
 }
 
 void ForStmt::recomputeArrayInfo() {
@@ -280,10 +279,10 @@ Subscript::Subscript(shared_ptr<ir::Expression> expr, const std::set<string> &lo
 
 /**
  * @brief Get the constant and the subscript from the two results of is_aipb_form.
- * Only one of the two results should be const_num. 
- * The sign of the return is set corresponding to parameter subop. 
+ * Only one of the two results should be const_num.
+ * The sign of the return is set corresponding to parameter subop.
  * So the caller can add the return directly without considering the sign for SubOp.
- * 
+ *
  * @param subop If true, the operator is subtraction, and the sign of the return is set innerly.
  */
 std::pair<int, Subscript> get_const_and_subscript(
@@ -296,8 +295,10 @@ std::pair<int, Subscript> get_const_and_subscript(
         }
         return {left_res.getB(), tmp};
     } else {
-        if (subop) return {-right_res.getB(), left_res};
-        else return {right_res.getB(), left_res};
+        if (subop)
+            return {-right_res.getB(), left_res};
+        else
+            return {right_res.getB(), left_res};
     }
 }
 
@@ -306,8 +307,7 @@ Subscript Subscript::is_aipb_form(shared_ptr<ir::Expression> expr, const std::se
     auto invalid_res = Subscript(ExprForm::invalid, 1, nullptr, 0);
     if (ir::llvm_isa<ir::Number>(expr)) {
         return {
-            ExprForm::const_num, 1, nullptr, int(std::get<0>(ir::llvm_pointer_cast<ir::Number>(expr)->getValue()))
-        };
+            ExprForm::const_num, 1, nullptr, int(std::get<0>(ir::llvm_pointer_cast<ir::Number>(expr)->getValue()))};
     } else if (auto decl_ref = ir::llvm_pointer_cast<ir::DeclRef>(expr)) {
         if (loop_vars.find(decl_ref->to_string()) != loop_vars.end()) {
             return {ExprForm::aipb, 1, decl_ref, 0};
@@ -329,7 +329,7 @@ Subscript Subscript::is_aipb_form(shared_ptr<ir::Expression> expr, const std::se
             }
             if (expr_id == 20) {
                 return {ExprForm::const_num, 1, nullptr, left_res.b * right_res.b};
-            } 
+            }
             if (expr_id == 110) {
                 auto tmp = get_const_and_subscript(left_res, right_res);
                 int coef = tmp.first;
@@ -340,10 +340,11 @@ Subscript Subscript::is_aipb_form(shared_ptr<ir::Expression> expr, const std::se
         } else if (ir::llvm_isa<ir::AddOp>(bop) || ir::llvm_isa<ir::SubOp>(bop)) {
             bool is_sub = ir::llvm_isa<ir::SubOp>(bop);
             if (expr_id == 2) {
-                if (left_res.getI()->to_string() != right_res.getI()->to_string()) return invalid_res;
+                if (left_res.getI()->to_string() != right_res.getI()->to_string())
+                    return invalid_res;
                 if (is_sub)
                     return {ExprForm::aipb, left_res.a - right_res.a, left_res.i, left_res.b - right_res.b};
-                else 
+                else
                     return {ExprForm::aipb, left_res.a + right_res.a, left_res.i, left_res.b + right_res.b};
             }
             if (expr_id == 11 || expr_id == 110) {
@@ -367,18 +368,21 @@ Subscript Subscript::is_aipb_form(shared_ptr<ir::Expression> expr, const std::se
                 auto tmp = get_const_and_subscript(left_res, right_res);
                 int cons = tmp.first;
                 const Subscript &subs = tmp.second;
-                if (subs.a % cons != 0 || subs.b % cons != 0) return invalid_res;
+                if (subs.a % cons != 0 || subs.b % cons != 0)
+                    return invalid_res;
                 return {ExprForm::aipb, subs.a / cons, subs.i, subs.b / cons};
             }
             if (left_res.expr_form == ExprForm::nonloop_index_var && right_res.expr_form == ExprForm::const_num) {
                 auto tmp = get_const_and_subscript(left_res, right_res);
                 int cons = tmp.first;
                 const Subscript &subs = tmp.second;
-                if (subs.a % cons != 0 || subs.b % cons != 0) return invalid_res;
+                if (subs.a % cons != 0 || subs.b % cons != 0)
+                    return invalid_res;
                 return {ExprForm::nonloop_index_var, subs.a / cons, subs.i, subs.b / cons};
             }
             if (left_res.expr_form == ExprForm::const_num && right_res.expr_form == ExprForm::const_num) {
-                if (left_res.b % right_res.b != 0) return invalid_res;
+                if (left_res.b % right_res.b != 0)
+                    return invalid_res;
                 return {ExprForm::const_num, 1, nullptr, left_res.b / right_res.b};
             }
             return invalid_res;
@@ -464,7 +468,7 @@ void ArrayRef::computeNormIdx() {
     norm_idx.clear();
     std::set<string> loop_vars_set;
     if (parent_loop) {
-        const auto &loop_vars = parent_loop->getLoopVars(); 
+        const auto &loop_vars = parent_loop->getLoopVars();
         for (const auto &loop_var : loop_vars) {
             loop_vars_set.insert(loop_var->to_string());
         }
@@ -487,7 +491,8 @@ ArrayRef::ArrayRef(const string &array_name, const vector<Subscript> &subscripts
         int b = idx.getB();
         shared_ptr<DeclRef> i = nullptr;
         auto gene_expr = idx.generateExpr();
-        if (gene_expr) this->indices.push_back(gene_expr);
+        if (gene_expr)
+            this->indices.push_back(gene_expr);
         else {
             llvm::outs() << "Invalid subscript: " << idx.to_string() << "\n";
             exit(0);
@@ -515,7 +520,10 @@ string ForStmt::to_string() const {
     for (unsigned i = 0; i < depth; i++) {
         indent += each_indent;
     }
-    string ret = "for (" + loop_var->to_string() + " = " + begin->to_string() + " : " + end->to_string() + ") {\n";
+    string loop_var = this->loop_var->to_string();
+    string ret = "for (" + loop_var + " = " + begin->to_string() + "; " 
+                + loop_var + " <= " + end->to_string() + "; " 
+                + loop_var + "++) {\n";
     for (const auto &stmt : *body) {
         ret += indent + each_indent + stmt->to_string() + "\n";
     }
@@ -524,7 +532,7 @@ string ForStmt::to_string() const {
 }
 
 void Block::setParentFor(ForStmt *parent_for, bool recompute_arr_info) {
-    this->parent_for = parent_for; 
+    this->parent_for = parent_for;
     for (auto &stmt : body) {
         if (auto inner_for = llvm_pointer_cast<ForStmt>(stmt)) {
             inner_for->setParentFor(parent_for);
