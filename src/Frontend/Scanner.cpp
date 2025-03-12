@@ -168,17 +168,15 @@ inline Location parseSourceLoc(const SourceLocation &loc, const SourceManager &S
 
 void MatchForStmtCallback::onEndOfTranslationUnit() {
     auto &SM = CI.getSourceManager();
-    // string replaceRegions(const string& str,
-    //     const vector<pair<Location, Location>>& regions,
-    //     const vector<string>& replace_strs) {
-
+    // Set line length to a large number so that the whole line can be replaced.
+    unsigned int large_length = INT32_MAX >> 2;
     vector<pair<Location, Location>> regions;
     vector<string> replace_strs;
     // Collect var declarations' locations and strings.
     for (auto iter : var_decls) {
         const auto &loc = parseSourceLoc(iter.first, SM);
         Location start = {loc.line, 1};
-        Location end = {loc.line, INT32_MAX >> 2};
+        Location end = {loc.line, large_length};
         const auto &decl_str = iter.second;
         regions.push_back({start, end});
         replace_strs.push_back(decl_str);
@@ -189,8 +187,9 @@ void MatchForStmtCallback::onEndOfTranslationUnit() {
         auto loc1 = parseSourceLoc(loc_pair.first, SM);
         auto loc2 = parseSourceLoc(loc_pair.second, SM);
         loc1.col = 1;
+        loc2.col = large_length;
         regions.push_back({loc1, loc2});
-        replace_strs.push_back(processed_outputs[i]);
+        replace_strs.push_back(processed_outputs[i] + "\n");
     }
     // print regions and strs
     // for (size_t i = 0; i < regions.size(); ++i) {

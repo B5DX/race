@@ -503,6 +503,7 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
         }
     }
     // 2: All used_ivs must be explicit_iv
+    this->ori_used_iv = ori_used_iv;
     for (const auto &s : ori_used_iv) {
         explicit_iv.insert(s);
     }
@@ -768,6 +769,10 @@ IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *paren
                                 break;
                             }
                         }
+                        //! If aa is used by the original loop, it can't be compressed to scalar.
+                        if (this->ori_used_iv.find(info.operands[i]) != this->ori_used_iv.end()) {
+                            flag = false;
+                        }
                         // All parents are in the same circle with it.
                         if (flag) {
                             expr = std::make_shared<ir::DeclRef>(info.operands[i]);
@@ -856,7 +861,9 @@ IVInfoManager::getContractedArf(const string &array, ir::ForStmt *parent_for,
         // Begin Optimization 2:
         shared_ptr<RangeCircle> parent_circle = nullptr;
         // If parent is empty, it must be used by original loop.
-        if (!info.parent.empty()) {
+        //! The optimization can only be done when aa is not used by the original loop.
+        //// if (!info.parent.empty()) {
+        if (this->ori_used_iv.find(array) == this->ori_used_iv.end()) {
             bool if_opt = true;
             for (const string &parent : info.parent) {
                 if (iv_info_map[parent].range_circle != circle) {

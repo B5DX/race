@@ -129,8 +129,9 @@ struct RangeCircle {
 class IVInfoManager {
 private:
     std::map<string, IVInfo> iv_info_map;
-    ir::ForStmt *parent_for;
+    ir::ForStmt *parent_for; // The innermost for loop;
     Graph<shared_ptr<RangeCircle>> range_circle_graph;
+    std::set<string> ori_used_iv; // The iv used in the original loop after extraction.
     using rational = boost::rational<int>;
 
     /**

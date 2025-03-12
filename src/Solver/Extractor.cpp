@@ -264,7 +264,9 @@ void extract(shared_ptr<ir::AVNBlock> avn_block, int avn_cnt) {
     // TODO: To implement the 1st aggressive extraction, we can ban the hoist and set commutable to false.
     // TODO: The 1st aggressive extraction can be relaxed by allowing the "+" hoist while banning the "*" hoist(commutable should also be set accordingly).
     for (auto tree : expr_trees) {
-        tree->hoist();
+        if (global_config.commutable) {
+            tree->hoist();
+        }
 #ifdef DEBUG
         llvm::outs() << "--------printTree--------\n";
         tree->printTree();
