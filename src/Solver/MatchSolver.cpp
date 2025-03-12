@@ -56,7 +56,7 @@
 //     }
 
 //     hash_number = std::hash<string>()(this->to_string());
-    
+
 //     // Only i-dim
 //     // auto left_src = arr_left->getExpression();
 //     // auto right_src = arr_right->getExpression();
@@ -146,7 +146,7 @@ DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeN
     //     std::cout << arr_right->to_string() << ": " << hash_str << std::endl;
     // }
     // std::cout << hash_str << std::endl;
-    
+
     // Only i-dim
     // auto left_src = arr_left->getExpression();
     // auto right_src = arr_right->getExpression();
@@ -170,8 +170,7 @@ string DeltaNode::to_string() const {
     string ret = arr_left->to_string() + " -> " + arr_right->to_string() + ": ";
     size_t idx = 0;
     for (const auto &pair : delta) {
-        ret += pair.first + " " + std::to_string(pair.second.numerator()) 
-            + "/" + std::to_string(pair.second.denominator()) + ", ";
+        ret += pair.first + " " + std::to_string(pair.second.numerator()) + "/" + std::to_string(pair.second.denominator()) + ", ";
     }
     return ret;
     // llvm::outs() << arr_left->to_string() << " -> " << arr_right->to_string() << ": ";
@@ -345,6 +344,55 @@ vector<shared_ptr<DeltaNode>> OptSolver::solve(const UDGraph<shared_ptr<DeltaNod
     }
     return ret;
 }
+
+// void DimFirstSolver::greedy_solve(
+//     const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx) {
+//     if (idx == nodes.size()) {
+//         if (temp_profit > profit) {
+//             profit = temp_profit;
+//             result = temp_vec;
+//         }
+//         return;
+//     }
+
+//     // If the remaining nodes can't exceed the current profit, return.
+//     if (temp_profit + nodes.size() - idx < profit)
+//         return;
+
+//     // Always choose current node if can:
+//     // If the current node connects of anyone in temp_vec, don't choose this node.
+//     bool flag = true;
+//     for (const auto &node : temp_vec) {
+//         if (delta_graph.adjacent(node, nodes[idx])) {
+//             flag = false;
+//             break;
+//         }
+//     }
+//     if (flag) {
+//         temp_vec.push_back(nodes[idx]);
+//         // if (temp_profit_map.find(nodes[idx]->getHash()) == temp_profit_map.end()) {
+//         //     temp_profit_map[nodes[idx]->getHash()] = 0;
+//         // }
+//         if (temp_profit_map[nodes[idx]->getHash()] >= 1) {
+//             temp_profit++;
+//         }
+//         ++temp_profit_map[nodes[idx]->getHash()];
+//         greedy_solve(delta_graph, nodes, idx + 1);
+//         if (temp_profit_map[nodes[idx]->getHash()] > 1) {
+//             temp_profit--;
+//         }
+//         --temp_profit_map[nodes[idx]->getHash()];
+//         temp_vec.pop_back();
+//     }
+// }
+
+// void DimFirstSolver::_solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx) {
+//     if (nodes.size() > 50) {
+//         greedy_solve(delta_graph, nodes, idx);
+//     } else {
+//         Solver::_solve(delta_graph, nodes, idx);
+//     }
+// }
 
 vector<shared_ptr<DeltaNode>> DimFirstSolver::solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph) {
     vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();

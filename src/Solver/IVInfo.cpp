@@ -445,9 +445,12 @@ void IVInfoManager::arrayContraction(shared_ptr<ir::AVNBlock> avn_block, std::se
             string loop_var = cur_for->getLoopVar()->to_string();
             // If vectorization needs to be utilized, the innermost loop should not be compressed.
             if (global_config.vectorization) {
+                // cur_for is the innermost loop.
                 if (!ir::llvm_isa<ir::ForStmt>(cur_for->getBody()->front())) {
-                    // cur_for is the innermost loop.
-                    circle->index_mod[loop_var] = 0;
+                    //! Set index_mod of innermost loop only if the loop_var is used by the range circle.
+                    if (circle->used_max_delta.find(loop_var) != circle->used_max_delta.end()) {
+                        circle->index_mod[loop_var] = 0;
+                    }
                     circle->insert_loc = cur_block;
                     break;
                 }
