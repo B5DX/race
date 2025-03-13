@@ -24,7 +24,7 @@ string UnaryOp::to_string() const {
 string BinaryOp::to_string() const {
     string lhs_str, rhs_str;
     lhs_str = generateParenthesesStr(lhs.get(), this, std::less<int>());
-    rhs_str = generateParenthesesStr(rhs.get(), this, std::less<int>());
+    rhs_str = generateParenthesesStr(rhs.get(), this, std::less_equal<int>());
     return lhs_str + " " + op + " " + rhs_str;
 }
 

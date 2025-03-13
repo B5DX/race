@@ -364,10 +364,22 @@ public:
     std::variant<LL, double> getValue() const { return value; }
 
     virtual string to_string() const override {
-        if (std::holds_alternative<LL>(value))
-            return std::to_string(std::get<LL>(value));
-        else
-            return std::to_string(std::get<double>(value));
+        if (std::holds_alternative<LL>(value)) {
+            LL temp = std::get<LL>(value);
+            if (temp < 0) {
+                return "(" + std::to_string(temp) + ")";
+            } else {
+                return std::to_string(temp);
+            }
+        }
+        else {
+            double temp = std::get<double>(value);
+            if (temp < 0) {
+                return "(" + std::to_string(temp) + ")";
+            } else {
+                return std::to_string(temp);
+            }
+        }
     }
 
     static bool classof(const Expression *expr) {
