@@ -1,6 +1,8 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+#include <cstdint>
+#include <stdexcept>
 #include <vector>
 #include <string>
 #include <memory>
@@ -16,7 +18,6 @@ struct Config {
     bool commutable = true;
     bool contraction = true;
     bool ESR = false;
-    // bool Glore = false;
     bool scalar_replacement = false;
     bool vectorization = true;
     int max_leaves = INT32_MAX;

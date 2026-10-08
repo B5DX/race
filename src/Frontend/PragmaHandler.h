@@ -8,20 +8,20 @@
 #include "llvm/Support/raw_ostream.h"
 
 class MyPragmaHandler : public clang::PragmaHandler {
-    bool IsValidatorRegistered;
     llvm::SmallVector<clang::SourceLocation> srcLocPragmaBegin;
     llvm::SmallVector<clang::SourceLocation> srcLocPragmaEnd;
     llvm::SmallVector<clang::SourceLocation> srcLocVar;
 
   public:
-    MyPragmaHandler() : PragmaHandler("race"),
-                        IsValidatorRegistered(false) {}
+    MyPragmaHandler() : PragmaHandler("race") {}
+
+    bool hasUnclosedRegion() const { return srcLocPragmaBegin.size() != srcLocPragmaEnd.size(); }
 
     void HandlePragma(clang::Preprocessor &PP, clang::PragmaIntroducer Introducer,
                       clang::Token &PragmaTok) override;
 
     bool ifBelongsToPragma(clang::SourceLocation Loc) {
-        assert(srcLocPragmaBegin.size() == srcLocPragmaEnd.size());
+        if (hasUnclosedRegion()) return false;
         for (size_t idx = 0; idx < srcLocPragmaBegin.size(); idx++) {
             if (Loc >= srcLocPragmaBegin[idx] && Loc <= srcLocPragmaEnd[idx]) {
                 return true;

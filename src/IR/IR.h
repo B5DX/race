@@ -5,6 +5,9 @@
 #include <boost/rational.hpp>
 #include <functional>
 #include <iostream>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <map>
 #include <set>
 #include <variant>
@@ -12,6 +15,7 @@
 
 namespace clang {
 class Expr;
+class ASTContext;
 class Stmt;
 class ForStmt;
 } // namespace clang
@@ -351,10 +355,12 @@ class Number : public Expression {
 
 protected:
     std::variant<LL, double> value;
+    string source_literal;
 
 public:
     Number(LL value) : Expression(EXPR_NUMBER), value(value) {}
-    Number(double value) : Expression(EXPR_NUMBER), value(value) {}
+    Number(double value, string source_literal = {})
+        : Expression(EXPR_NUMBER), value(value), source_literal(std::move(source_literal)) {}
 
     Number(int value) : Expression(EXPR_NUMBER), value(static_cast<LL>(value)) {}
     Number(long value) : Expression(EXPR_NUMBER), value(static_cast<LL>(value)) {}
@@ -364,6 +370,7 @@ public:
     std::variant<LL, double> getValue() const { return value; }
 
     virtual string to_string() const override {
+        if (!source_literal.empty()) return source_literal;
         if (std::holds_alternative<LL>(value)) {
             LL temp = std::get<LL>(value);
             if (temp < 0) {
@@ -373,12 +380,12 @@ public:
             }
         }
         else {
-            double temp = std::get<double>(value);
-            if (temp < 0) {
-                return "(" + std::to_string(temp) + ")";
-            } else {
-                return std::to_string(temp);
-            }
+            const double temp = std::get<double>(value);
+            std::ostringstream out;
+            out << std::setprecision(std::numeric_limits<double>::max_digits10) << temp;
+            string literal = out.str();
+            if (literal.find_first_of(".eE") == string::npos) literal += ".0";
+            return temp < 0 ? "(" + literal + ")" : literal;
         }
     }
 
@@ -390,7 +397,7 @@ public:
         if (std::holds_alternative<LL>(value))
             return std::make_shared<Number>(std::get<LL>(value));
         else
-            return std::make_shared<Number>(std::get<double>(value));
+            return std::make_shared<Number>(std::get<double>(value), source_literal);
     }
 };
 
@@ -537,8 +544,8 @@ public:
 
 class ForStmt : public Statement {
     // Parse and set the loop variable, begin, and end from the for statement.
-    void buildBounds(const clang::ForStmt *for_stmt);
-    void processInnerStmt(const clang::Stmt *stmt);
+    void buildBounds(const clang::ForStmt *for_stmt, const clang::ASTContext &context);
+    void processInnerStmt(const clang::Stmt *stmt, const clang::ASTContext &context);
 
 protected:
     shared_ptr<DeclRef> loop_var;
@@ -559,7 +566,7 @@ public:
      * @warning Parent_for cannot be shared_ptr<ForStmt> because of the constructor uses this.
      * And shared_from_this() can only be called after the object is constructed.
      */
-    ForStmt(const clang::ForStmt *for_stmt, ForStmt *parent_for = nullptr);
+    ForStmt(const clang::ForStmt *for_stmt, const clang::ASTContext &context, ForStmt *parent_for = nullptr);
     ForStmt(shared_ptr<DeclRef> loop_var, shared_ptr<Expression> begin, shared_ptr<Expression> end, ForStmt *parent_for)
         : Statement(STMT_FOR), loop_var(loop_var), begin(begin), end(end), parent_for(const_cast<ForStmt *>(parent_for)), depth(parent_for ? parent_for->depth + 1 : 0) {
         this->body = std::make_shared<Block>(this);
@@ -685,41 +692,7 @@ public:
         return cur_for;
     }
 
-    // void setDepth(size_t depth) {
-    //     for (auto &stmt : outer_block->getBody()) {
-    //         if (auto for_stmt = llvm_pointer_cast<ForStmt>(stmt)) {
-    //             for_stmt->setDepth(depth);
-    //         }
-    //     }
-    // }
-    // void setIndentSpace(size_t indent) {
-    //     for (auto &stmt : outer_block->getBody()) {
-    //         if (auto for_stmt = llvm_pointer_cast<ForStmt>(stmt)) {
-    //             for_stmt->setIndentSpace(indent);
-    //         }
-    //     }
-    // }
 };
-
-// class ArrayIndex {
-//   protected:
-//     vector<int> index_coefficient;
-//     int constant;
-//     shared_ptr<ForStmt> parent_loop;
-
-//   public:
-//     ArrayIndex(const vector<int> &index_coefficient, int constant, shared_ptr<ForStmt> parent_loop)
-//         : index_coefficient(index_coefficient), constant(constant), parent_loop(parent_loop) {}
-// };
-
-// class ArrayRef : public Expression {
-//   protected:
-//     shared_ptr<DeclRef> array;
-//     vector<shared_ptr<ArrayIndex>> indices;
-
-//   public:
-//     ArrayRef(shared_ptr<DeclRef> array, ) : Expression(EXPR_ARRAY_REF), array(array) {}
-// };
 
 // a * i + b
 class Subscript {
@@ -912,32 +885,14 @@ public:
     }
 };
 
-// class InterVar : public ir::ArrayRef {
-// private:
-//     shared_ptr<ir::Expression> expr;
-//     std::map<string, int> upper_bounds;
-//     std::map<string, int> lower_bounds;
-
-// public:
-//     InterVar(shared_ptr<ir::DeclRef> array, const vector<shared_ptr<ir::Expression>> &indices, ir::ForStmt *parent_loop,
-//              shared_ptr<ir::Expression> expr, const std::map<string, int> &upper_bounds, const std::map<string, int> &lower_bounds)
-//         : ir::ArrayRef(array, indices, parent_loop), expr(expr), upper_bounds(upper_bounds), lower_bounds(lower_bounds) {}
-
-//     shared_ptr<ir::Expression> getExpr() const { return expr; }
-
-//     static bool classof(const ir::Expression *expr) {
-//         return expr->get_kind() == EXPR_INTER_VAR;
-//     }
-// };
-
 /**
  * @brief Recursively parse an expression from clang::Expr to ir::Expression. If failed, throw an exception.
  * @param expr The clang::Expr to be parsed.
- * @param parent_loop The parent loop of the expression. Default to nullptr. Only used for ArrayRef.
+ * @param parent_loop The parent loop of the expression, used for ArrayRef.
+ * @param context Source context for preserving literal spelling.
  */
-shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_loop);
+shared_ptr<Expression> parseExpression(const clang::Expr *expr, ForStmt *parent_loop, const clang::ASTContext &context);
 
-// shared_ptr<Expression> buildExpression(std::pair<string, int> idx);
 shared_ptr<ir::Expression> buildExpression(shared_ptr<ir::Expression> base_expr, int shift);
 
 /**

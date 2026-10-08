@@ -1,7 +1,10 @@
-.vscode/*
+.vscode
+.cache
 build/*
 archive/*
 /test.cpp
 /a.out
 /test_graph.cpp
 *.gch
+/build*/
+# /example/race_*

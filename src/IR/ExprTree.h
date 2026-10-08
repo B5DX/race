@@ -24,9 +24,7 @@ using std::weak_ptr;
 class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
   protected:
     vector<shared_ptr<ExprTreeNode>> children;
-    // parent use weak_ptr to avoid Circular Reference.
-    // Using shared_ptr hear will cause memory leak. For example, parent A has children B.
-    // If A is nolonger used, it will not be deleted since there is a reference from B to A.
+    // A weak parent pointer avoids a reference cycle with owned children.
     std::weak_ptr<ExprTreeNode> parent;
     shared_ptr<Expression> src;
 
@@ -72,8 +70,7 @@ class ExprTreeNode : public std::enable_shared_from_this<ExprTreeNode> {
     /**
      * @brief Deposit the tree to a binary form using post traversal.
      * @details
-     * This method transforms the tree to a binary tree with relatively low depth.
-     * TODO: MinusOp and DivOp May be wrong.
+     * Rebuild flattened addition/multiplication in stored operand order.
      */
     virtual void deposit();
 
@@ -213,19 +210,6 @@ class ExprTree {
     virtual void deposit() { root->deposit(); assign->setRHS(root->getExpression()); }
 
     shared_ptr<ExprTreeNode> getRoot() { return root; }
-
-    // void compressDim(shared_ptr<DeclRef> target_arr, int max_dim) {
-    //     for (auto iter = this->begin(); iter != this->end(); ++iter) {
-    //         auto node = *iter;
-    //         if (auto arf = llvm_pointer_cast<ArrayRef>(node->getExpression())) {
-    //             if (arf->getArrayName() == target_arr) {
-    //                 auto spaceRefs = arf->getSpaceRefs();
-    //                 spaceRefs.erase(spaceRefs.begin(), spaceRefs.end() - 1 - max_dim);
-    //                 arf->setSpaceRefs(spaceRefs);
-    //             }
-    //         }
-    //     }
-    // }
 
     void replaceArf2Scalar(shared_ptr<ArrayRef> arf, shared_ptr<DeclRef> scalar);
 

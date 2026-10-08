@@ -1,4 +1,4 @@
-// TODO: Only support one loop var with coefficient 1 in each array index.
+// Each array index supports one loop variable with coefficient 1.
 #include "Solver/Extractor.h"
 #include "Solver/IVInfo.h"
 #include "Solver/MatchSolver.h"
@@ -8,7 +8,7 @@ using namespace ir;
 
 namespace extract {
 
-void collectCandidates(shared_ptr<ExprTree> tree, std::map<string, vector<TreeNodeVec>> &result) {
+void collectCandidates(shared_ptr<ExprTree> tree, std::map<string, vector<TreeNodeVec>> &result, const set<string> &modified_vars) {
     for (auto node : *tree) {
         if (node->isLeafNode()) {
             continue;
@@ -18,10 +18,18 @@ void collectCandidates(shared_ptr<ExprTree> tree, std::map<string, vector<TreeNo
         for (auto child : node->getChildren()) {
             if (child->isLeafNode()) {
                 if (auto arr_ref = llvm_pointer_cast<ArrayRef>(child->getExpression())) {
-                    if (arr_ref->isValid())
+                    if (arr_ref->isValid() &&
+                        modified_vars.find(arr_ref->getArrayName()->to_string()) == modified_vars.end()) {
                         cur_cand.push_back(child);
+                    }
                 } else { // Number or scalar variable.
-                    cur_cand.push_back(child);
+                    if (auto decl = llvm_pointer_cast<DeclRef>(child->getExpression())) {
+                        if (modified_vars.find(decl->to_string()) == modified_vars.end()) {
+                            cur_cand.push_back(child);
+                        }
+                    } else { // Number.
+                        cur_cand.push_back(child);
+                    }
                 }
             }
         }
@@ -32,8 +40,7 @@ void collectCandidates(shared_ptr<ExprTree> tree, std::map<string, vector<TreeNo
     }
 }
 
-// TODO: Only support one loop var with coefficient 1 in each array index.
-// TODO: support sin and cos.
+// Each array index supports one loop variable with coefficient 1.
 void replaceMatchCand(const vector<shared_ptr<DeltaNode>> &match_cands, int &iv_cnt, int avn_cnt, IVInfoManager &info_manager) {
     std::map<size_t, vector<shared_ptr<DeltaNode>>> hash_node_map;
     for (const auto &node : match_cands) {
@@ -52,8 +59,8 @@ void replaceMatchCand(const vector<shared_ptr<DeltaNode>> &match_cands, int &iv_
         if (auto iv_bop = llvm_pointer_cast<BinaryOp>(l_tree_node->getParent()->getExpression())) {
             info_manager.registerArray(iv_name, iter.second[0]);
         } else {
-            llvm::outs() << "Unsupported operator: " << l_tree_node->getParent()->getExpression()->to_string() << "\n";
-            exit(0);
+            llvm::errs() << "Unsupported operator: " << l_tree_node->getParent()->getExpression()->to_string() << "\n";
+            throw std::runtime_error("Candidate parent must be a binary operator");
         }
         // Replace old array with new array.
         for (const auto &node : iter.second) {
@@ -129,7 +136,6 @@ void postProcess(shared_ptr<ir::AVNBlock> avn_block, IVInfoManager &info_manager
 
     // TODO: The loop fusion for split circle is not supported.
 
-    // TODO: array definition generation.
     std::map<string, ForStmt *> idx_for_map;
     idx_for_map[innermost_for->getLoopVar()->to_string()] = innermost_for.get();
     ir::ForStmt *cur_for = innermost_for.get();
@@ -181,108 +187,61 @@ void postProcess(shared_ptr<ir::AVNBlock> avn_block, IVInfoManager &info_manager
     }
 }
 
+// Forward substitution within one iteration. Keep assignments: a scalar may be
+// live after the region or needed by the next iteration. Invalidate saved RHSs
+// whenever a dependency changes, including dependencies in array subscripts.
 void scalarReplacement(shared_ptr<ir::Block> assign_block) {
-    std::map<string, shared_ptr<ir::Expression>> s2e;
-    std::map<string, size_t> s2idx;
-    vector<bool> del_idx(assign_block->size(), 0);
-
-    auto replaceScalar = [&](shared_ptr<ir::Operator> op) {
-        if (auto bop = ir::llvm_pointer_cast<ir::BinaryOp>(op)) {
-            auto operand = bop->getLHS();
-            if (auto decl = ir::llvm_pointer_cast<ir::DeclRef>(operand)) {
-                string var_name = decl->to_string();
-                if (s2e.find(var_name) != s2e.end()) {
-                    bop->setLHS(s2e[var_name]->clone());
-                    del_idx[s2idx[var_name]] = 1;
-                }
-            }
-            operand = bop->getRHS();
-            if (auto decl = ir::llvm_pointer_cast<ir::DeclRef>(operand)) {
-                string var_name = decl->to_string();
-                if (s2e.find(var_name) != s2e.end()) {
-                    bop->setRHS(s2e[var_name]->clone());
-                    del_idx[s2idx[var_name]] = 1;
-                }
-            }
-        } else if (auto uop = ir::llvm_pointer_cast<ir::UnaryOp>(op)) {
-            auto operand = uop->getOperand();
-            if (auto decl = ir::llvm_pointer_cast<ir::DeclRef>(operand)) {
-                string var_name = decl->to_string();
-                if (s2e.find(var_name) != s2e.end()) {
-                    uop->setOperand(s2e[var_name]->clone());
-                    del_idx[s2idx[var_name]] = 1;
-                }
-            }
+    std::map<string, shared_ptr<ir::Expression>> values;
+    std::function<shared_ptr<Expression>(shared_ptr<Expression>)> substitute =
+        [&](shared_ptr<Expression> expr) -> shared_ptr<Expression> {
+        if (auto decl = llvm_pointer_cast<DeclRef>(expr)) {
+            auto it = values.find(decl->to_string());
+            return it == values.end() ? expr : it->second->clone();
         }
+        if (auto bop = llvm_pointer_cast<BinaryOp>(expr)) {
+            bop->setLHS(substitute(bop->getLHS()));
+            bop->setRHS(substitute(bop->getRHS()));
+        } else if (auto uop = llvm_pointer_cast<UnaryOp>(expr)) {
+            uop->setOperand(substitute(uop->getOperand()));
+        }
+        // Array indices retain their integer types and are not substituted.
+        return expr;
     };
-    
-    for (size_t i = 0; i < assign_block->size(); i++) {
-        auto assign = ir::llvm_pointer_cast<ir::Assignment>(assign_block->at(i));
-        assert(assign);
-        auto lhs = assign->getLHS();
-        auto rhs = assign->getRHS();
-        ir::for_each_expr<ir::Operator>(rhs, replaceScalar);
-        if (auto decl = ir::llvm_pointer_cast<ir::DeclRef>(lhs)) {
-            string var_name = decl->to_string();
-            s2e[var_name] = rhs;
-            s2idx[var_name] = i;
+    std::function<bool(shared_ptr<Expression>, const string &)> depends =
+        [&](shared_ptr<Expression> expr, const string &name) {
+        if (auto decl = llvm_pointer_cast<DeclRef>(expr)) return decl->to_string() == name;
+        if (auto arf = llvm_pointer_cast<ArrayRef>(expr)) {
+            if (arf->getArrayName()->to_string() == name) return true;
+            for (auto idx : arf->getIndices()) if (depends(idx, name)) return true;
+        } else if (auto bop = llvm_pointer_cast<BinaryOp>(expr)) {
+            return depends(bop->getLHS(), name) || depends(bop->getRHS(), name);
+        } else if (auto uop = llvm_pointer_cast<UnaryOp>(expr)) {
+            return depends(uop->getOperand(), name);
         }
-    }
-
-    // delete the unused scalar assignment.
-    vector<shared_ptr<ir::Statement>> &body = assign_block->getBody();
-    size_t idx_cnt = 0;
-    for (auto iter = body.begin(); iter != body.end();) {
-        if (del_idx[idx_cnt++]) {
-            iter = body.erase(iter);
-        } else {
-            ++iter;
+        return false;
+    };
+    for (auto stmt : *assign_block) {
+        auto assign = llvm_pointer_cast<Assignment>(stmt);
+        auto rhs = substitute(assign->getRHS());
+        assign->setRHS(rhs);
+        auto decl = llvm_pointer_cast<DeclRef>(assign->getLHS());
+        if (!decl) { values.clear(); continue; } // A store may alias any saved load.
+        const string name = decl->to_string();
+        for (auto it = values.begin(); it != values.end();) {
+            if (it->first == name || depends(it->second, name)) it = values.erase(it);
+            else ++it;
         }
+        if (!depends(rhs, name)) values[name] = rhs->clone();
     }
 }
 
-void extract(shared_ptr<ir::AVNBlock> avn_block, int avn_cnt) {
-    // Build ExprTree for each assignment.
-    Forest expr_trees;
-    shared_ptr<ir::Block> assignment_block = avn_block->getInnermostFor()->getBody();
-    if (global_config.scalar_replacement) {
-        scalarReplacement(assignment_block);
-    }
-    for (const auto &stmt : *assignment_block) {
-        auto assign = ir::llvm_pointer_cast<ir::Assignment>(stmt);
-        assert(assign);
-        expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
-    }
-    vector<string> op_list = {"+", "-", "*", "/", "call", "**"}; // sin and cos is supported by using CallOp.
-    std::map<string, vector<TreeNodeVec>> candidates;
-    IVInfoManager info_manager(assignment_block->getParentFor());
-    int iv_cnt = 0;
-    for (auto op : op_list) {
-        candidates[op] = vector<TreeNodeVec>();
-    }
-
-    // TODO: To implement the 1st aggressive extraction, we can ban the hoist and set commutable to false.
-    // TODO: The 1st aggressive extraction can be relaxed by allowing the "+" hoist while banning the "*" hoist(commutable should also be set accordingly).
-    for (auto tree : expr_trees) {
-        if (global_config.commutable) {
-            tree->hoist();
-        }
-#ifdef DEBUG
-        llvm::outs() << "--------printTree--------\n";
-        tree->printTree();
-#endif
-        info_manager.registerNativeArray(tree);
-    }
-#ifdef DEBUG
-    llvm::outs() << "--------printInfo--------\n";
-    info_manager.printInfo();
-#endif
+void detection_loop(Forest &expr_trees, vector<string> &op_list, std::map<string, vector<TreeNodeVec>> &candidates, set<string> &modified_vars, IVInfoManager &info_manager, int &iv_cnt, int &avn_cnt) {
     while (true) { // Recursively extract.
         candidates.clear();
         for (const auto &tree : expr_trees) {
-            collectCandidates(tree, candidates);
+            collectCandidates(tree, candidates, modified_vars);
         }
-#ifdef DEBUG
+#ifdef RACE_DEBUG
         llvm::outs() << "--------printCandidates--------\n";
         // print candidates
         for (auto op : op_list) {
@@ -327,27 +286,31 @@ void extract(shared_ptr<ir::AVNBlock> avn_block, int avn_cnt) {
                 }
             }
         } // End of constructing the delta-delta_graph.
-#ifdef DEBUG
-        // std::cout << "-------------Graph-------------\n";
-        // delta_graph.printGraph();
-#endif
         // Solve the delta-graph.
         vector<shared_ptr<DeltaNode>> result;
         shared_ptr<Solver> solver = std::make_shared<DimFirstSolver>(info_manager.getParentFor()->getLoopVars());
-        // shared_ptr<Solver> solver = std::make_shared<OptSolver>();
+
+#ifdef RACE_DEBUG
+        std::cout << delta_graph.getNodes().size() << " candidates, ";
+        size_t edge_cnt = 0;
+        for (const auto &node : delta_graph.getNodes()) {
+            edge_cnt += delta_graph.getNeighbors(node).size();
+        }
+        std::cout << edge_cnt/2 << " edges.\n";
+#endif
         result = solver->solve(delta_graph);
 
         if (result.empty())
             break;
 
-#ifdef DEBUG
+#ifdef RACE_DEBUG
         std::cout << "-------------Result-------------\n";
         for (const auto &node : result) {
             std::cout << *node << "\n";
         }
 #endif
         replaceMatchCand(result, iv_cnt, avn_cnt, info_manager);
-#ifdef DEBUG
+#ifdef RACE_DEBUG
         std::cout << "-------------After Replace-------------\n";
         for (const auto &tree : expr_trees) {
             tree->printTree();
@@ -356,12 +319,102 @@ void extract(shared_ptr<ir::AVNBlock> avn_block, int avn_cnt) {
         std::cout << "-------------End of Extract-------------\n";
 #endif
     }
-#ifdef DEBUG
+}
+
+void extract(shared_ptr<ir::AVNBlock> avn_block, int avn_cnt) {
+    // Build ExprTree for each assignment.
+    Forest expr_trees;
+    shared_ptr<ir::Block> assignment_block = avn_block->getInnermostFor()->getBody();
+    std::set<string> modified_vars;
+    for (auto var : avn_block->getInnermostFor()->getLoopVars())
+        modified_vars.insert(var->to_string());
+    if (global_config.scalar_replacement) {
+        scalarReplacement(assignment_block);
+    }
+    for (const auto &stmt : *assignment_block) {
+        auto assign = ir::llvm_pointer_cast<ir::Assignment>(stmt);
+        assert(assign);
+        if (auto arf = ir::llvm_pointer_cast<ir::ArrayRef>(assign->getLHS())) {
+            modified_vars.insert(arf->getArrayName()->to_string());
+        } else if (auto decl = ir::llvm_pointer_cast<ir::DeclRef>(assign->getLHS())) {
+            modified_vars.insert(decl->to_string());
+        }
+        expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
+    }
+    vector<string> op_list = {"+", "-", "*", "/", "call", "**"}; // sin and cos is supported by using CallOp.
+    std::map<string, vector<TreeNodeVec>> candidates;
+    shared_ptr<IVInfoManager> info_manager = make_shared<IVInfoManager>(assignment_block->getParentFor());
+    int iv_cnt = 0;
+    for (auto op : op_list) {
+        candidates[op] = vector<TreeNodeVec>();
+    }
+
+    for (auto tree : expr_trees) {
+        if (global_config.commutable) {
+            tree->hoist();
+        }
+#ifdef RACE_DEBUG
+        llvm::outs() << "--------printTree--------\n";
+        tree->printTree();
+#endif
+        info_manager->registerNativeArray(tree);
+    }
+#ifdef RACE_DEBUG
+    llvm::outs() << "--------printInfo--------\n";
+    info_manager->printInfo();
+#endif
+
+    try {
+        detection_loop(expr_trees, op_list, candidates, modified_vars, *info_manager, iv_cnt, avn_cnt);
+    } catch (const SearchSpaceTooLarge& e) {
+#ifdef RACE_DEBUG
+        llvm::errs() << "Search space too large, fallback to no reassociation.\n";
+#endif
+        struct RestoreCommutability {
+            bool original = global_config.commutable;
+            ~RestoreCommutability() { global_config.commutable = original; }
+        } restore;
+        const bool original_commutable = restore.original;
+        //* Failed because of too many delta nodes. Try no reassociation first and then reassociation.
+        // Rebuild expr_trees and info_manager since the original ones may be modified by the solver.
+        expr_trees.clear();
+        for (const auto &stmt : *assignment_block) {
+            auto assign = ir::llvm_pointer_cast<ir::Assignment>(stmt);
+            assert(assign);
+            expr_trees.push_back(std::make_shared<ir::ExprTree>(assign));
+        }
+        candidates.clear();
+        info_manager = make_shared<IVInfoManager>(assignment_block->getParentFor());
+        iv_cnt = 0;
+        for (auto op : op_list) {
+            candidates[op] = vector<TreeNodeVec>();
+        }
+        // No reassociation.
+        global_config.commutable = false;
+        for (auto tree : expr_trees) {
+            if (global_config.commutable) {
+                tree->hoist();
+            }
+            info_manager->registerNativeArray(tree);
+        }
+        detection_loop(expr_trees, op_list, candidates, modified_vars, *info_manager, iv_cnt, avn_cnt);
+        // Reassociation.
+        global_config.commutable = original_commutable;
+        for (auto tree : expr_trees) {
+            if (global_config.commutable) {
+                tree->hoist();
+            }
+            info_manager->registerNativeArray(tree);
+        }
+        detection_loop(expr_trees, op_list, candidates, modified_vars, *info_manager, iv_cnt, avn_cnt);
+    }
+
+#ifdef RACE_DEBUG
     std::cout << "-------------Post Process-------------\n";
 #endif
-    postProcess(avn_block, info_manager, expr_trees);
+    postProcess(avn_block, *info_manager, expr_trees);
 
-#ifdef DEBUG
+#ifdef RACE_DEBUG
     std::cout << "-------------Deposite-------------\n";
 #endif
     // Deposit will apply the changes to the original AVN IR.

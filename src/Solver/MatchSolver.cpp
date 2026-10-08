@@ -1,84 +1,11 @@
 #include "Solver/MatchSolver.h"
+#include "llvm/Support/raw_ostream.h"
 #include "string"
 #include <boost/rational.hpp>
 
-// DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeNode> right, bool commutable)
-//     : arr_left(left), arr_right(right) {
-// #ifdef DEBUG
-//     llvm::outs() << "Constructing DeltaNode: " << arr_left->to_string(false) << " -> " << arr_right->to_string(false) << "\n";
-//     llvm::outs() << commutable << "\n";
-// #endif
-//     std::map<string, int> left_indices, right_indices;
-//     if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(arr_left->getExpression())) {
-//         left_indices = arr_ref->getDisp();
-//     }
-//     if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(arr_right->getExpression())) {
-//         right_indices = arr_ref->getDisp();
-//     }
-
-//     if (commutable) { // Make sure the left array is "smaller" than the right array.
-//         std::set<string> keys;
-//         for (const auto &left : left_indices) {
-//             keys.insert(left.first);
-//         }
-//         for (const auto &right : right_indices) {
-//             keys.insert(right.first);
-//         }
-
-//         if (arr_left->to_string(true) > arr_right->to_string(true)) {
-//             std::swap(this->arr_left, this->arr_right);
-//             std::swap(left_indices, right_indices);
-//         } else if (arr_left->to_string(true) == arr_right->to_string(true)) {
-//             for (const auto &key : keys) {
-//                 auto left_iter = left_indices.find(key);
-//                 auto right_iter = right_indices.find(key);
-//                 if (left_iter != left_indices.end() && right_iter != right_indices.end()) {
-//                     if (left_iter->second > right_iter->second) {
-//                         std::swap(this->arr_left, this->arr_right);
-//                         std::swap(left_indices, right_indices);
-//                         break;
-//                     }
-//                 } else if (right_iter != right_indices.end()) {
-//                     std::swap(this->arr_left, this->arr_right);
-//                     std::swap(left_indices, right_indices);
-//                     break;
-//                 } else {
-//                     break;
-//                 }
-//             }
-//         }
-//     }
-
-//     for (const auto &left : left_indices) {
-//         if (right_indices.find(left.first) != right_indices.end()) {
-//             delta[left.first] = right_indices[left.first] - left.second;
-//         }
-//     }
-
-//     hash_number = std::hash<string>()(this->to_string());
-
-//     // Only i-dim
-//     // auto left_src = arr_left->getExpression();
-//     // auto right_src = arr_right->getExpression();
-//     // string aux_str = "";
-//     // if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(left_src)) {
-//     //     auto loop_vars = arr_ref->getParentLoop()->getLoopVars();
-//     //     for (size_t idx = 1; idx < loop_vars.size(); idx++) {
-//     //         aux_str += std::to_string(left_indices[loop_vars[idx]->to_string()]) + "_";
-//     //     }
-//     // }
-//     // if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(right_src)) {
-//     //     auto loop_vars = arr_ref->getParentLoop()->getLoopVars();
-//     //     for (size_t idx = 1; idx < loop_vars.size(); idx++) {
-//     //         aux_str += std::to_string(right_indices[loop_vars[idx]->to_string()]) + "_";
-//     //     }
-//     // }
-//     // hash_number = std::hash<string>()(this->to_string() + aux_str);
-// }
-
 DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeNode> right, bool commutable)
     : arr_left(left), arr_right(right) {
-#ifdef DEBUG
+#ifdef RACE_DEBUG
     llvm::outs() << "Constructing DeltaNode: " << arr_left->to_string(false) << " -> " << arr_right->to_string(false) << "\n";
     llvm::outs() << commutable << "\n";
 #endif
@@ -113,6 +40,8 @@ DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeN
                         std::swap(left_rpi, right_rpi);
                         std::swap(left_arf, right_arf);
                         break;
+                    } else if (left_sub.getB() < right_sub.getB()) {
+                        break;
                     }
                 }
             }
@@ -120,7 +49,8 @@ DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeN
         }
     }
 
-    string hash_str = std::to_string(left_rpi) + "$" + std::to_string(right_rpi);
+    string hash_str = arr_left->getParent()->to_string() + "$" +
+                      std::to_string(left_rpi) + "$" + std::to_string(right_rpi);
     if (left_arf && right_arf) {
         std::map<string, boost::rational<int>> left_firstIdxOffset, right_firstIdxOffset;
         left_firstIdxOffset = left_arf->getFirstIdxOffset();
@@ -135,35 +65,6 @@ DeltaNode::DeltaNode(shared_ptr<ir::ExprTreeNode> left, shared_ptr<ir::ExprTreeN
         }
     }
     hash_number = std::hash<string>()(hash_str);
-    // if (left_arf) {
-    //     std::cout << left_arf->to_string() << " -> ";
-    // } else {
-    //     std::cout << arr_left->to_string() << " -> ";
-    // }
-    // if (right_arf) {
-    //     std::cout << right_arf->to_string() << ": " << hash_str << std::endl;
-    // } else {
-    //     std::cout << arr_right->to_string() << ": " << hash_str << std::endl;
-    // }
-    // std::cout << hash_str << std::endl;
-
-    // Only i-dim
-    // auto left_src = arr_left->getExpression();
-    // auto right_src = arr_right->getExpression();
-    // string aux_str = "";
-    // if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(left_src)) {
-    //     auto loop_vars = arr_ref->getParentLoop()->getLoopVars();
-    //     for (size_t idx = 1; idx < loop_vars.size(); idx++) {
-    //         aux_str += std::to_string(left_indices[loop_vars[idx]->to_string()]) + "_";
-    //     }
-    // }
-    // if (auto arr_ref = ir::llvm_pointer_cast<ir::ArrayRef>(right_src)) {
-    //     auto loop_vars = arr_ref->getParentLoop()->getLoopVars();
-    //     for (size_t idx = 1; idx < loop_vars.size(); idx++) {
-    //         aux_str += std::to_string(right_indices[loop_vars[idx]->to_string()]) + "_";
-    //     }
-    // }
-    // hash_number = std::hash<string>()(this->to_string() + aux_str);
 }
 
 string DeltaNode::to_string() const {
@@ -173,11 +74,6 @@ string DeltaNode::to_string() const {
         ret += pair.first + " " + std::to_string(pair.second.numerator()) + "/" + std::to_string(pair.second.denominator()) + ", ";
     }
     return ret;
-    // llvm::outs() << arr_left->to_string() << " -> " << arr_right->to_string() << ": ";
-    // for (const auto &pair : delta) {
-    //     llvm::outs() << pair.first << " " << pair.second << ", ";
-    // }
-    // llvm::outs() << "\n";
 }
 
 bool DeltaNode::operator==(const DeltaNode &other) const {
@@ -218,6 +114,8 @@ std::ostream &operator<<(std::ostream &os, const DeltaNode &node) {
 }
 
 void Solver::_solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx) {
+    if (idx == 0 && nodes.size() > 32)
+        throw SearchSpaceTooLarge("More than 32 candidates in exhaustive matching");
     if (idx == nodes.size()) {
         if (temp_profit > profit) {
             profit = temp_profit;
@@ -241,9 +139,6 @@ void Solver::_solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vec
     }
     if (flag) {
         temp_vec.push_back(nodes[idx]);
-        // if (temp_profit_map.find(nodes[idx]->getHash()) == temp_profit_map.end()) {
-        //     temp_profit_map[nodes[idx]->getHash()] = 0;
-        // }
         if (temp_profit_map[nodes[idx]->getHash()] >= 1) {
             temp_profit++;
         }
@@ -284,7 +179,6 @@ vector<shared_ptr<DeltaNode>> NaiveSolver::solve(const UDGraph<shared_ptr<DeltaN
 // Tips: 连通分量+哈希值 可以优化。先找出所有连通分量，然后针对某个哈希值（例如0），找到所有包含0的连通分量，如果这些分量包含其他哈希值则继续递归，直到所有找到的连通分量之外都不再包含连通分量中的任何哈希值，则该子图可以独立计算。
 vector<shared_ptr<DeltaNode>> OptSolver::solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph) {
     vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();
-    // std::cout << "Connected components: " << connected_components.size() << "\n";
     // connected_component_hash_set[i] is the hash_number appeared in connected_components[i].
     vector<std::set<size_t>> connected_component_hash_set(connected_components.size());
     vector<bool> solved(connected_components.size(), false);
@@ -314,7 +208,6 @@ vector<shared_ptr<DeltaNode>> OptSolver::solve(const UDGraph<shared_ptr<DeltaNod
                                   connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
                                   std::inserter(hash_set_intersection, hash_set_intersection.begin()));
             if (hash_set_intersection.size() > 0) {
-                // std::cout << "Connected component " << i << " and " << j << " have intersection.\n";
                 std::set_union(hash_set.begin(), hash_set.end(),
                                connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
                                std::inserter(hash_set, hash_set.begin()));
@@ -335,8 +228,6 @@ vector<shared_ptr<DeltaNode>> OptSolver::solve(const UDGraph<shared_ptr<DeltaNod
             }
         }
 
-        // std::cout << "Solving connected component " << i << " with " << filtered_nodes.size() << " nodes.\n";
-
         // Solve current connected component. Results will be stored in this->result.
         init();
         _solve(component, filtered_nodes, 0);
@@ -345,58 +236,8 @@ vector<shared_ptr<DeltaNode>> OptSolver::solve(const UDGraph<shared_ptr<DeltaNod
     return ret;
 }
 
-// void DimFirstSolver::greedy_solve(
-//     const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx) {
-//     if (idx == nodes.size()) {
-//         if (temp_profit > profit) {
-//             profit = temp_profit;
-//             result = temp_vec;
-//         }
-//         return;
-//     }
-
-//     // If the remaining nodes can't exceed the current profit, return.
-//     if (temp_profit + nodes.size() - idx < profit)
-//         return;
-
-//     // Always choose current node if can:
-//     // If the current node connects of anyone in temp_vec, don't choose this node.
-//     bool flag = true;
-//     for (const auto &node : temp_vec) {
-//         if (delta_graph.adjacent(node, nodes[idx])) {
-//             flag = false;
-//             break;
-//         }
-//     }
-//     if (flag) {
-//         temp_vec.push_back(nodes[idx]);
-//         // if (temp_profit_map.find(nodes[idx]->getHash()) == temp_profit_map.end()) {
-//         //     temp_profit_map[nodes[idx]->getHash()] = 0;
-//         // }
-//         if (temp_profit_map[nodes[idx]->getHash()] >= 1) {
-//             temp_profit++;
-//         }
-//         ++temp_profit_map[nodes[idx]->getHash()];
-//         greedy_solve(delta_graph, nodes, idx + 1);
-//         if (temp_profit_map[nodes[idx]->getHash()] > 1) {
-//             temp_profit--;
-//         }
-//         --temp_profit_map[nodes[idx]->getHash()];
-//         temp_vec.pop_back();
-//     }
-// }
-
-// void DimFirstSolver::_solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx) {
-//     if (nodes.size() > 50) {
-//         greedy_solve(delta_graph, nodes, idx);
-//     } else {
-//         Solver::_solve(delta_graph, nodes, idx);
-//     }
-// }
-
 vector<shared_ptr<DeltaNode>> DimFirstSolver::solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph) {
     vector<UDGraph<shared_ptr<DeltaNode>>> connected_components = delta_graph.connectedComponents();
-    // std::cout << "Connected components: " << connected_components.size() << "\n";
     // connected_component_hash_set[i] is the hash_number appeared in connected_components[i].
     vector<std::set<size_t>> connected_component_hash_set(connected_components.size());
     vector<bool> solved(connected_components.size(), false);
@@ -426,7 +267,6 @@ vector<shared_ptr<DeltaNode>> DimFirstSolver::solve(const UDGraph<shared_ptr<Del
                                   connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
                                   std::inserter(hash_set_intersection, hash_set_intersection.begin()));
             if (hash_set_intersection.size() > 0) {
-                // std::cout << "Connected component " << i << " and " << j << " have intersection.\n";
                 std::set_union(hash_set.begin(), hash_set.end(),
                                connected_component_hash_set[j].begin(), connected_component_hash_set[j].end(),
                                std::inserter(hash_set, hash_set.begin()));
@@ -464,6 +304,9 @@ vector<shared_ptr<DeltaNode>> DimFirstSolver::solve(const UDGraph<shared_ptr<Del
                             }
                         }
                     }
+                }
+                if (filtered_nodes.size() > 32) {
+                    throw SearchSpaceTooLarge("Too many nodes.");
                 }
                 init();
                 _solve(component, filtered_nodes, 0);

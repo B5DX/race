@@ -4,11 +4,9 @@
 #include <random>
 using namespace std;
 
-const int nblocks_clinic = 100, ny_block = 1000, nx_block = 100;
+const int nblocks_clinic = 100, ny_block = 100, nx_block = 1000;
 double ULAT[nblocks_clinic][ny_block][nx_block], ULON[nblocks_clinic][ny_block][nx_block];
-// double iv_0_1[ny_block + 1][nx_block + 1], iv_0_0[ny_block + 1][nx_block + 1], iv_0_3[ny_block + 1][nx_block + 1], iv_0_2[ny_block + 1][nx_block + 1];
-double xsw, ysw, xs, ys, xw, yw, xc, yc, tx, ty, tz;
-double zsw, zs, zw, zc;
+double xsw, ysw, xs, ys, xw, yw, xc, yc, tx, ty, tz, zsw, zw, zs, zc;
 double p25 = 25;
 
 void init_variables() {
@@ -20,14 +18,6 @@ void init_variables() {
             }
         }
     }
-    // for (int j = 0; j < ny_block; j++) {
-    //     for (int i = 0; i < nx_block; i++) {            
-    //         iv_0_1[j][i] = rand() % 100;
-    //         iv_0_0[j][i] = rand() % 100;
-    //         iv_0_3[j][i] = rand() % 100;
-    //         iv_0_2[j][i] = rand() % 100;
-    //     }
-    // }
     xsw = rand() % 100;
     ysw = rand() % 100;
     xs = rand() % 100;
@@ -42,13 +32,16 @@ void init_variables() {
 }
 
 int main() {
+    int n, j, i;
     init_variables();
+    #pragma race var
     // record time
     clock_t start, end;
     start = clock();
-    for (int n = 1; n < nblocks_clinic; n++) {
-        for (int j = 2; j < ny_block; j++) {
-            for (int i = 2; i < nx_block; i++) {
+    #pragma race begin
+    for (n = 1; n < nblocks_clinic; n++) {
+        for (j = 2; j < ny_block; j++) {
+            for (i = 2; i < nx_block; i++) {
                 zsw=cos(ULAT[n][j-1][i-1]);
                 xsw=cos(ULON[n][j-1][i-1])*zsw;
                 ysw=sin(ULON[n][j-1][i-1])*zsw;
@@ -71,6 +64,7 @@ int main() {
             }
         }
     }
+    #pragma race end
     end = clock();
     cout << "Time: " << (double)(end - start) / CLOCKS_PER_SEC << "s" << endl;
     return 0;

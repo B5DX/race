@@ -105,8 +105,6 @@ public:
 class DimFirstSolver : public Solver {
 private:
     vector<string> loop_vars;
-    // virtual void _solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx) override;
-    // void greedy_solve(const UDGraph<shared_ptr<DeltaNode>> &delta_graph, const vector<shared_ptr<DeltaNode>> &nodes, size_t idx);
 public:
     DimFirstSolver(const vector<string> &loop_vars) : loop_vars(loop_vars) {}
     DimFirstSolver(const vector<shared_ptr<ir::DeclRef>> &loop_vars) {
@@ -116,6 +114,12 @@ public:
     }
     virtual vector<shared_ptr<DeltaNode>> solve(
         const UDGraph<shared_ptr<DeltaNode>> &delta_graph) override;
+};
+
+class SearchSpaceTooLarge : public std::runtime_error {
+public:
+    explicit SearchSpaceTooLarge(const std::string& msg)
+        : std::runtime_error(msg) {}
 };
 
 #endif

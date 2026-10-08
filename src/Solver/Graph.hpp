@@ -9,11 +9,6 @@
 #include <map>
 #include <queue>
 
-// template <typename T>
-// struct PointerLess {
-//     bool operator()(const T &lhs, const T &rhs) const { return *lhs < *rhs; }
-// };
-
 /**
  * @brief A generic undirected graph class.
  */
@@ -23,7 +18,6 @@ class Graph {
     vector<Node> nodes;
     vector<vector<size_t>> adj_list;
     std::map<Node, size_t> node_to_index;
-    // std::map<Node, size_t, PointerLess<Node>> node_to_index; // This is used for pointer comparison.
 
   public:
     Graph() {}
@@ -50,8 +44,8 @@ class Graph {
         auto src_iter = node_to_index.find(src);
         auto dst_iter = node_to_index.find(dst);
         if (src_iter == node_to_index.end() || dst_iter == node_to_index.end()) {
-            std::cout << "addEdge Error: Node not found in graph.\n";
-            exit(0);
+            std::cerr << "addEdge Error: Node not found in graph.\n";
+            throw std::runtime_error("Graph edge references an unknown node");
         }
         size_t src_idx = src_iter->second;
         size_t dst_idx = dst_iter->second;
@@ -65,15 +59,14 @@ class Graph {
 
     virtual void removeNode(const Node &node) {
         if (!hasNode(node)) {
-            std::cout << "removeNode Error: Node not found in graph.\n";
-            exit(0);
+            std::cerr << "removeNode Error: Node not found in graph.\n";
+            throw std::runtime_error("Cannot remove an unknown graph node");
         }
         size_t del_idx = node_to_index.at(node);
         nodes.erase(nodes.begin() + del_idx);
         adj_list.erase(adj_list.begin() + del_idx);
         for (vector<size_t> &neighbors : adj_list) {
-            // neighbors.erase(std::remove(neighbors.begin(), neighbors.end(), del_idx), neighbors.end());
-            neighbors.erase(std::find(neighbors.begin(), neighbors.end(), del_idx));
+            neighbors.erase(std::remove(neighbors.begin(), neighbors.end(), del_idx), neighbors.end());
             for(size_t &neighbor : neighbors) {
                 if (neighbor > del_idx) {
                     --neighbor;
@@ -88,7 +81,7 @@ class Graph {
 
     virtual vector<Node> getNeighbors(const Node &node) const {
         if (!hasNode(node)) {
-            exit(0);
+            throw std::runtime_error("Cannot find neighbors of an unknown graph node");
         }
         size_t idx = node_to_index.at(node);
         vector<Node> neighbors;
@@ -117,7 +110,7 @@ class Graph {
         auto src_iter = node_to_index.find(src);
         auto dst_iter = node_to_index.find(dst);
         if (src_iter == node_to_index.end() || dst_iter == node_to_index.end()) {
-            exit(0);
+            throw std::runtime_error("Cannot check adjacency of an unknown graph node");
         }
         size_t src_idx = src_iter->second;
         size_t dst_idx = dst_iter->second;
@@ -150,19 +143,6 @@ class Graph {
         return res;
     }
 
-    // virtual void printGraph() const {
-    //     std::cout << "Printing Graph. Output Format: NodeIndex: NodeValue -> Neighbor1(is_equal), Neighbor2(is_equal), ...\n";
-    //     for (size_t i = 0; i < nodes.size(); i++) {
-    //         std::cout << i << ": ";
-    //         std::cout << *nodes[i] << ": ";
-    //         // std::cout << nodes[i]->to_string() << " -> " << "(" << nodes[i]->getHash() << ")" << ": ";
-    //         for (const auto &neighbor : adj_list[i]) {
-    //             std::cout << neighbor << ", ";
-    //             // std::cout << neighbor << "(" << (*nodes[i] == *nodes[neighbor]) << ")" << ", ";
-    //         }
-    //         std::cout << std::endl;
-    //     }
-    // }
 };
 
 /**
@@ -177,7 +157,7 @@ class UDGraph : public Graph<Node> {
         auto src_iter = this->node_to_index.find(src);
         auto dst_iter = this->node_to_index.find(dst);
         if (src_iter == this->node_to_index.end() || dst_iter == this->node_to_index.end()) {
-            exit(0);
+            throw std::runtime_error("Graph edge references an unknown node");
         }
         size_t src_idx = src_iter->second;
         size_t dst_idx = dst_iter->second;
@@ -196,7 +176,7 @@ class UDGraph : public Graph<Node> {
         auto src_iter = this->node_to_index.find(src);
         auto dst_iter = this->node_to_index.find(dst);
         if (src_iter == this->node_to_index.end() || dst_iter == this->node_to_index.end()) {
-            exit(0);
+            throw std::runtime_error("Cannot check adjacency of an unknown graph node");
         }
         size_t src_idx = src_iter->second;
         size_t dst_idx = dst_iter->second;

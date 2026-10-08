@@ -120,8 +120,8 @@ void IVInfoManager::registerArray(string array, shared_ptr<DeltaNode> delta_node
 void IVInfoManager::registerUsage(shared_ptr<ir::ExprTreeNode> expr_node) {
     string array = expr_node->to_string();
     if (!hasIVInfo(array) || isNativeArray(array)) {
-        std::cout << "Register Usage Error: " << array << std::endl;
-        exit(0);
+        std::cerr << "Register Usage Error: " << array << std::endl;
+        throw std::runtime_error("Cannot register usage of an unknown or native array");
     }
     auto &info = iv_info_map[array];
     auto cur_expr = expr_node->getExpression();
@@ -151,8 +151,8 @@ void IVInfoManager::registerUsage(shared_ptr<ir::ExprTreeNode> expr_node) {
 
 shared_ptr<ir::Expression> IVInfoManager::getRefExpr(string array, shared_ptr<DeltaNode> delta_node) {
     if (!hasIVInfo(array)) {
-        std::cout << array << "is not registered but getRefExpr is called." << std::endl;
-        exit(0);
+        std::cerr << array << "is not registered but getRefExpr is called." << std::endl;
+        throw std::runtime_error("Cannot reference an unregistered array");
     }
     shared_ptr<ir::ExprTreeNode> l_expr_node = delta_node->getLeft();
     shared_ptr<ir::ExprTreeNode> r_expr_node = delta_node->getRight();
@@ -171,8 +171,8 @@ shared_ptr<ir::Expression> IVInfoManager::getRefExpr(string array, shared_ptr<De
                     if (cur_expr_delta.find(idx_str) == cur_expr_delta.end()) {
                         auto delta = child_arr_sub[idx_str] - rational(this_sub.getB(), this_sub.getA());
                         if (delta.denominator() != 1) {
-                            std::cout << "Error: getRefExpr: " << array << std::endl;
-                            exit(0);
+                            std::cerr << "Error: getRefExpr: " << array << std::endl;
+                            throw std::runtime_error("Non-integral auxiliary array displacement");
                         }
                         cur_expr_delta[idx_str] = delta.numerator();
                     }
@@ -254,14 +254,6 @@ std::map<string, vector<string>> IVInfoManager::getNewOperandsMap(std::set<strin
             }
         }
     }
-    // Print
-    // for (const auto &iter : new_operands_map) {
-    //     std::cout << "New Operands of " << iter.first << ": ";
-    //     for (const auto &operand : iter.second) {
-    //         std::cout << operand << ", ";
-    //     }
-    //     std::cout << std::endl;
-    // }
     return new_operands_map;
 }
 
@@ -295,7 +287,7 @@ void IVInfoManager::buildRangeCircleGraph(std::set<string> explicit_iv) {
             }
         }
     }
-#ifdef DEBUG
+#ifdef RACE_DEBUG
     this->printInfo();
 #endif
 
@@ -349,7 +341,7 @@ void IVInfoManager::buildRangeCircleGraph(std::set<string> explicit_iv) {
         }
     }
     // Finish building range circle graph.
-#ifdef DEBUG
+#ifdef RACE_DEBUG
     // print range circle graph
     for (const auto &circle : this->range_circle_graph.getNodes()) {
         std::cout << "Circle " << circle << ": ";
@@ -376,7 +368,6 @@ void IVInfoManager::buildRangeCircleGraph(std::set<string> explicit_iv) {
 #endif
 }
 
-// TODO: haven't support "--no-contraction" option.
 void IVInfoManager::arrayContraction(shared_ptr<ir::AVNBlock> avn_block, std::set<string> explicit_iv) {
     this->buildRangeCircleGraph(explicit_iv);
     // Skip the array reference independent loop.
@@ -422,7 +413,7 @@ void IVInfoManager::arrayContraction(shared_ptr<ir::AVNBlock> avn_block, std::se
     // Compute the index_mod and insert location.
     for (auto &circle : topo_order) {
         shared_ptr<ir::Block> cur_block = skipped_block;
-        // If contraction is disabled, keep all used index variables unchanged, 
+        // If contraction is disabled, keep all used index variables unchanged,
         // i.e. keep index_mod = 0, which is set when initialized.
         if (!global_config.contraction) {
             while (auto cur_for = ir::llvm_pointer_cast<ir::ForStmt>(cur_block->front())) {
@@ -464,8 +455,8 @@ void IVInfoManager::arrayContraction(shared_ptr<ir::AVNBlock> avn_block, std::se
                     circle->index_mod[loop_var] = 1;
                     cur_block = cur_for->getBody();
                     if (cur_block->empty()) {
-                        std::cout << "Empty Block Error." << std::endl;
-                        exit(0);
+                        std::cerr << "Empty Block Error." << std::endl;
+                        throw std::runtime_error("Cannot insert precomputation into an empty block");
                     }
                     continue;
                 } else {
@@ -481,8 +472,8 @@ void IVInfoManager::arrayContraction(shared_ptr<ir::AVNBlock> avn_block, std::se
             }
             cur_block = cur_for->getBody();
             if (cur_block->empty()) {
-                std::cout << "Empty Block Error." << std::endl;
-                exit(0);
+                std::cerr << "Empty Block Error." << std::endl;
+                throw std::runtime_error("Cannot insert precomputation into an empty block");
             }
         }
         if (!circle->insert_loc) {
@@ -499,7 +490,6 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
         const auto &iv = str_info.first;
         const auto &info = str_info.second;
         bool flag = false;
-        // if (info.referenced_cnt > 2) flag = true;
         if (info.op == "call") flag = true;
         if (flag) {
             explicit_iv.insert(iv);
@@ -580,7 +570,7 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
     std::map<shared_ptr<RangeCircle>, pair<shared_ptr<Block>, shared_ptr<Statement>>> circle2pipeline;
 
     auto avn_innermost_for = avn_block->getInnermostFor();
-    
+
     for (const auto &range_circle : range_circles) {
         auto insert_loc = range_circle->insert_loc;
         auto generateAssignmentBlock = [&](shared_ptr<RangeCircle> range_circle,
@@ -599,7 +589,7 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
             return block;
         };
         auto insert_before_for_stmt = llvm_pointer_cast<ForStmt>(insert_loc->front());
-        if (!insert_before_for_stmt || range_circle->index_mod.empty()) { 
+        if (!insert_before_for_stmt || range_circle->index_mod.empty()) {
             // Insert in the innermost loop || iv is DeclRef or Number (its index_mod will be empty).
             // No loop structure is needed. Just generate the assignment block.
             circle2for[range_circle] = generateAssignmentBlock(range_circle, insert_loc->getParentFor(), false);
@@ -617,7 +607,7 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
                     // Because if outmost mod is 0, the inner loop's mod must be 0.
                     // if > 1, the inner ones must be 0.
                     // It's not possible that the outmost mod is 1.
-                    mod = range_circle->index_mod[idx_str]; 
+                    mod = range_circle->index_mod[idx_str];
                 }
 
                 if (cur_for == insert_before_for_stmt.get()) {
@@ -635,8 +625,8 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
             // Else, generate the loop structure by the reverse order of candidate_for.
             string outer_idx_str = candidate_for.back()->getLoopVar()->to_string();
             if (mod == 1) {
-                std::cout << "Error: mod should not be 1." << std::endl;
-                exit(0);
+                std::cerr << "Error: mod should not be 1." << std::endl;
+                throw std::runtime_error("Unexpected scalar compression in a precomputation loop");
             }
             pair<int, int> used_min_max = {range_circle->used_min_delta[outer_idx_str], range_circle->used_max_delta[outer_idx_str]};
             pair<shared_ptr<Expression>, shared_ptr<Expression>> for_min_max = {candidate_for.back()->getBegin(), candidate_for.back()->getEnd()};
@@ -650,7 +640,7 @@ void IVInfoManager::generatePrecomputeLoop(shared_ptr<ir::AVNBlock> avn_block, s
             // Build the outmost loop new_for.
             auto new_for = std::make_shared<ForStmt>(outer_idx_str, new_begin, new_end, insert_before_for_stmt->getParentFor());
             circle2for[range_circle] = new_for;
-            
+
             // Build the inner loop structure.
             auto parent_for = new_for;
             for (auto riter = candidate_for.rbegin() + 1; riter < candidate_for.rend(); riter++) {
@@ -727,7 +717,7 @@ shared_ptr<ir::Expression>
 IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *parent_for,
                                          const std::map<string, int> &shift_disp, const std::set<string> &explicit_iv) {
     if (!hasIVInfo(array) || isNativeArray(array)) {
-        exit(0);
+        throw std::runtime_error("Cannot construct an unknown or native auxiliary array");
     }
 
     const auto &info = iv_info_map[array];
@@ -798,8 +788,8 @@ IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *paren
                 std::map<string, int> expr_shift;
                 for (const auto &s : info.subs[i]) {
                     if (!s.isAipb()) { // Since operand is an intermediate variable, all subs are "1*i+b" form.
-                        std::cout << "Error: getConstructRHS: " << array << std::endl;
-                        exit(0);
+                        std::cerr << "Error: getConstructRHS: " << array << std::endl;
+                        throw std::runtime_error("Cannot generate this auxiliary array expression");
                     }
                     expr_shift[s.getI()->to_string()] = s.getB();
                 }
@@ -808,8 +798,8 @@ IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *paren
                 auto expr_shift = shift_disp;
                 for (auto &s : info.subs[i]) {
                     if (!s.isAipb()) {
-                        std::cout << "Error: getConstructRHS: " << array << std::endl;
-                        exit(0);
+                        std::cerr << "Error: getConstructRHS: " << array << std::endl;
+                        throw std::runtime_error("Cannot generate this auxiliary array expression");
                     }
                     string idx_str = s.getI()->to_string();
                     if (expr_shift.find(idx_str) != expr_shift.end()) {
@@ -829,7 +819,7 @@ shared_ptr<ir::Expression>
 IVInfoManager::getContractedConstructRHS(const string &array, ir::ForStmt *parent_for,
                                          const std::set<string> &explicit_iv, bool is_pipeline) {
     if (!hasIVInfo(array) || isNativeArray(array)) {
-        exit(0);
+        throw std::runtime_error("Cannot construct an unknown or native auxiliary array");
     }
     std::map<string, int> shift;
     auto range_circle = iv_info_map[array].range_circle;
@@ -850,8 +840,8 @@ shared_ptr<ir::Expression>
 IVInfoManager::getContractedArf(const string &array, ir::ForStmt *parent_for,
                                 const std::map<string, int> &shift_disp) {
     if (!hasIVInfo(array) || isNativeArray(array)) {
-        std::cout << "Error: getConstructLHS: " << array << std::endl;
-        exit(0);
+        std::cerr << "Error: getConstructLHS: " << array << std::endl;
+        throw std::runtime_error("Cannot construct an unknown or native auxiliary array");
     }
 
     auto &info = iv_info_map[array];
@@ -865,7 +855,6 @@ IVInfoManager::getContractedArf(const string &array, ir::ForStmt *parent_for,
         shared_ptr<RangeCircle> parent_circle = nullptr;
         // If parent is empty, it must be used by original loop.
         //! The optimization can only be done when aa is not used by the original loop.
-        //// if (!info.parent.empty()) {
         if (this->ori_used_iv.find(array) == this->ori_used_iv.end()) {
             bool if_opt = true;
             for (const string &parent : info.parent) {
@@ -939,7 +928,6 @@ void IVInfoManager::printInfo() {
             for (auto i : arr.second.index_vars)
                 std::cout << i << " ";
             std::cout << "]" << std::endl;
-            // std::cout << this->getConstructRHS(arr.first)->to_string() << std::endl;
         }
     }
     std::cout << "Referenced Count: " << std::endl;

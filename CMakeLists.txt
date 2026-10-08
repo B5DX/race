@@ -1,71 +1,47 @@
-cmake_minimum_required(VERSION 3.5)
-project(avn_project)
+cmake_minimum_required(VERSION 3.16)
+project(RACE LANGUAGES C CXX)
 
-set(LLVM_DIR "/home/yuanliang/.local/lib/cmake/llvm")
-set(CLANG_DIR "/home/yuanliang/.local/lib/cmake/clang")
-set(CMAKE_CXX_COMPILER "/home/yuanliang/.local/bin/clang++")
+find_package(LLVM REQUIRED CONFIG)
+find_package(Clang REQUIRED CONFIG)
+find_package(Boost REQUIRED)
+option(RACE_DEBUG "Enable detailed extraction diagnostics" OFF)
 
-find_package(LLVM REQUIRED CONFIG HINTS ${LLVM_DIR} NO_DEFAULT_PATH)
-message(STATUS "Using LLVM ${LLVM_PACKAGE_VERSION}")
-
+add_executable(race
+  src/main.cpp
+  src/Frontend/Scanner.cpp src/Frontend/PragmaHandler.cpp
+  src/IR/IR.cpp src/IR/ExprTree.cpp
+  src/Solver/Extractor.cpp src/Solver/IVInfo.cpp src/Solver/MatchSolver.cpp)
+target_compile_features(race PRIVATE cxx_std_17)
+target_include_directories(race PRIVATE src)
+target_include_directories(race SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
-include_directories(${LLVM_INCLUDE_DIRS})
-link_directories(${LLVM_LIBRARY_DIR})
-
-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-include(AddLLVM)
-
-find_package(Clang REQUIRED CONFIG HINTS ${LLVM_DIR} ${CLANG_DIR} NO_DEFAULT_PATH)
-include_directories(${CLANG_INCLUDE_DIRS})
-
-#list(APPEND CMAKE_MODULE_PATH "${CLANG_CMAKE_DIR}")
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
-add_definitions(${LLVM_DEFINITIONS})
-if(NOT ${LLVM_ENABLE_RTTI})
-  message(STATUS "Disabling RTTI")
-  # For non-MSVC compilers
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
+if(NOT LLVM_ENABLE_RTTI)
+  target_compile_options(race PRIVATE -fno-rtti)
 endif()
+if(RACE_DEBUG)
+  target_compile_definitions(race PRIVATE RACE_DEBUG)
+endif()
+# Discover the headers belonging to this LLVM installation, rather than a user's path.
+find_program(RACE_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
+if(RACE_CLANG)
+  execute_process(COMMAND "${RACE_CLANG}" -print-resource-dir
+    OUTPUT_VARIABLE RACE_RESOURCE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE RACE_RESOURCE_STATUS)
+  if(RACE_RESOURCE_STATUS EQUAL 0)
+    target_compile_definitions(race PRIVATE RACE_RESOURCE_DIR="${RACE_RESOURCE_DIR}")
+  endif()
+endif()
+target_link_libraries(race PRIVATE clangTooling clangASTMatchers clangFrontend clangSerialization clangRewrite clangAST clangLex clangBasic LLVMCore LLVMSupport LLVMFrontendOpenMP)
+install(TARGETS race RUNTIME DESTINATION bin)
 
-# add -g to enable debug
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-
-include_directories(${PROJECT_SOURCE_DIR}/src
-                    ${PROJECT_SOURCE_DIR}/src/**)
-                    
-file(GLOB SOURCE 
-    ${PROJECT_SOURCE_DIR}/src/*.cpp 
-    ${PROJECT_SOURCE_DIR}/src/**/*.cpp)
-
-llvm_map_components_to_libnames(LLVM_LIBS
-    x86asmparser
-    x86codegen
-    x86desc
-    x86disassembler
-    x86info
-)
-
-add_executable(race ${SOURCE})
-
-set( LLVM_LINK_COMPONENTS
-  ${LLVM_TARGETS_TO_BUILD}
-  Option
-  Support
-  )
-
-target_link_libraries(race
-  clangAST
-  clangASTMatchers
-  clangBasic
-  clangLex
-  clangFrontend
-  clangSerialization
-  clangTooling
-  LLVMSupport
-  LLVMCore
-  # ${LLVM_LIBS}
-  )
-
-install(TARGETS race
-  RUNTIME DESTINATION bin)
+include(CTest)
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND AND RACE_CLANG)
+    if(RACE_DEBUG)
+      set(RACE_TEST_ARGS --debug-build)
+    endif()
+    add_test(NAME regression COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/regression.py" $<TARGET_FILE:race> "${RACE_CLANG}" ${RACE_TEST_ARGS})
+  endif()
+endif()
